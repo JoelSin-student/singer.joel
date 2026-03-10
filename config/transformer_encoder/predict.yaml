@@ -16,7 +16,7 @@ predict:
   n_head: 8
   num_encoder_layer: 8
   dropout: 0.2
-  batch_size: 64
+  batch_size: 32
   sequence_len: 30
 
   # check point file path

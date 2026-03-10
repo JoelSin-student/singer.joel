@@ -1,7 +1,7 @@
 # Loader-related functions
 #
-#   Consider moving some functions later.
-#   Evaluate whether a single YAML file can cover all modes.
+#
+#
 #
 import pandas as pd
 import numpy as np
@@ -99,47 +99,43 @@ def load_and_combine_data(data_pairs):
     Args:
         data_pairs (dict): Object with tags as keys and file-path dictionaries as values.
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: 
+        tuple[pd.DataFrame, pd.DataFrame]: Tuple of concatenated skeleton and insole DataFrames.
     """
     # Create lists to store each data category
-    all_skeleton_df     = []
-    all_insole_left_df  = []
-    all_insole_right_df = []
+    all_skeleton_df = []
+    all_insole_df   = []
     
     # Load each file as DataFrame and append to lists
     for tag, paths in data_pairs.items():
         skeleton_df     = pd.read_csv(paths['skeleton'])
-        insole_left_df  = pd.read_csv(paths['insole'][0])
-        insole_right_df = pd.read_csv(paths['insole'][1])
+        insole_df  = pd.read_csv(paths['insole'])
 
         all_skeleton_df.append(skeleton_df)
-        all_insole_left_df.append(insole_left_df)
-        all_insole_right_df.append(insole_right_df)
+        all_insole_df.append(insole_df)
 
     return (pd.concat(all_skeleton_df, ignore_index=True),
-            pd.concat(all_insole_left_df, ignore_index=True),
-            pd.concat(all_insole_right_df, ignore_index=True))
+            pd.concat(all_insole_df, ignore_index=True))
 
 
-def restructure_insole_data(insole_left_df, insole_right_df):
-    """Split left/right insole data into pressure/IMU and re-combine them.
+def restructure_insole_data(insole_df):
+    """Split insole data into pressure/IMU.
     Args:
-        insole_left_df (pd.DataFrame): DataFrame containing left insole data.
-        insole_right_df (pd.DataFrame): DataFrame containing right insole data.
+        insole_df (pd.DataFrame): DataFrame containing insole data.
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: Tuple of split/re-combined DataFrames.
     """
     # Extract sensor groups from left-foot data
-    pressure_left_df = insole_left_df.drop(["Gyro_x","Gyro_y","Gyro_z","Acc_x","Acc_y","Acc_z"],axis=1)
-    IMU_left_df      = insole_left_df[["Gyro_x","Gyro_y","Gyro_z","Acc_x","Acc_y","Acc_z"]]
-
-    # Extract sensor groups from right-foot data
-    pressure_right_df = insole_right_df.drop(["Gyro_x","Gyro_y","Gyro_z","Acc_x","Acc_y","Acc_z"],axis=1)
-    IMU_right_df      = insole_right_df[["Gyro_x","Gyro_y","Gyro_z","Acc_x","Acc_y","Acc_z"]]
-
-    # Merge left and right features
-    pressure_lr = pd.concat([pressure_left_df, pressure_right_df], axis=1)
-    IMU_lr      = pd.concat([IMU_left_df, IMU_right_df], axis=1)
+    pressure_lr = insole_df.drop(["left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
+                                  "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
+                                  "left total force[N]","left center of pressure X[-0.5...+0.5]","left center of pressure Y[-0.5...+0.5]",
+                                  "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
+                                  "right angular X[dps]","right angular Y[dps]","right angular Z[dps]",
+                                  "right total force[N]","right center of pressure X[-0.5...+0.5]","right center of pressure Y[-0.5...+0.5]",
+                                  "right steps[]","left steps[]"],axis=1)
+    IMU_lr      = insole_df[["left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
+                             "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
+                             "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
+                             "right angular X[dps]","right angular Y[dps]","right angular Z[dps]","right steps[]","left steps[]"]]
 
     return pressure_lr, IMU_lr
 
