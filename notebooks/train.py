@@ -1,15 +1,8 @@
 # Training processor
 #
-# TODO: Add "successfully" logs for each step.
-# TODO: Allow model switching from the command line.
-# TODO: Consider using quaternions.
-# TODO: Re-check whether @staticmethod is necessary.
-# TODO: Try random down/up-sampling as data augmentation.
-# TODO: Try pretraining on large skeleton datasets (e.g., COCO) then fine-tuning.
-# TODO: Evaluate first-derivative-only features.
-# TODO: Explore collaboration with lightweight CNNs.
-# TODO: Explore real-time processing.
-# TODO: Test Mish activation function.
+#
+#
+#
 import pandas as pd
 import numpy as np
 import argparse
@@ -19,9 +12,9 @@ from torch.utils.data import DataLoader
 from scipy.ndimage import gaussian_filter1d
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-from processor.loader import get_datapath_pairs, load_and_combine_data, restructure_insole_data, calculate_grad, load_config,  PressureSkeletonDataset
-from processor.util import print_config
-from processor.model import Transformer_Encoder, Skeleton_Loss, train_Transformer_Encoder
+from notebooks.loader import get_datapath_pairs, load_and_combine_data, restructure_insole_data, calculate_grad, load_config,  PressureSkeletonDataset
+from notebooks.util import print_config
+from notebooks.model import Transformer_Encoder, Skeleton_Loss, train_Transformer_Encoder
 
 def start(args):
     # Load YAML file
@@ -33,11 +26,11 @@ def start(args):
     
     # Preprocess skeleton data and insole data
     # Load the data and combine the left and right insole data, then separate it into pressure data and IMU data.
-    skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)                           # Collect paired skeleton/insole file paths
-    skeleton_df, insole_left_df, insole_right_df  = load_and_combine_data(skeleton_insole_datapath_pairs)   # Load skeleton, right-insole, and left-insole data
-    pressure_lr_df, IMU_lr_df = restructure_insole_data(insole_left_df, insole_right_df)                    # Split pressure/IMU and merge left+right
-    if config["train"]["use_gradient_data"] == True: calculate_grad()                                       # Add derivative features (experimental)
-    # input_feature_np = np.concatenate([pressure_lr_df, IMU_lr_df], axis=1)
+    skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)     # Collect paired skeleton/insole file paths
+    skeleton_df, insole_df  = load_and_combine_data(skeleton_insole_datapath_pairs)   # Load skeleton, right-insole, and left-insole data
+    pressure_lr_df, IMU_lr_df = restructure_insole_data(insole_df)                    # Split pressure/IMU and merge left+right
+    if config["train"]["use_gradient_data"] == True: calculate_grad()                 # Add derivative features
+    # But does it really add the values to the preceding dfs? I think it just calculates and then discards the results. Need to check this.
 
     # Temporary handling added for test4 data
     skeleton_df = skeleton_df.fillna(method='bfill').fillna(method='ffill')
@@ -78,11 +71,11 @@ def start(args):
     val_input_feature   = np.concatenate([val_pressure_scaled, val_IMU_scaled], axis=1) 
 
     # set final train parameters----------------------------------------------------------------------------
-    parameters = {                                                      # TODO: consider shortening `parameters` variable name.
+    parameters = {
         # model
         "d_model"            : config["train"]["d_model"],
         "n_head"             : config["train"]["n_head"],
-        "num_encoder_layer"  : config["train"]["num_encoder_layer"],    # TODO: standardize naming conventions (dim/num/len, etc.)
+        "num_encoder_layer"  : config["train"]["num_encoder_layer"],
         "dropout"            : config["train"]["dropout"],
 
         # learning
@@ -98,7 +91,7 @@ def start(args):
         "loss_beta"          : config["train"]["loss_beta"],
 
         # others
-        "use_gradient_data"  : config["train"]["use_gradient_data"],    # TODO: maybe rename to `use_grad`
+        "use_gradient_data"  : config["train"]["use_gradient_data"],
         "sequence_len"       : config["train"]["sequence_len"],
         "input_dim"          : pressure_lr_df.shape[1] + IMU_lr_df.shape[1], # Total dims of pressure + gyro + acceleration
         "num_joints"         : skeleton_df.shape[1] // 3,                    # Divide by 3 for 3D coordinates
@@ -131,8 +124,6 @@ def start(args):
         num_workers=4,
         pin_memory=True
     )
-    # TODO: split ML model branches by mode
-    # if(args.model == "transformer_encoder"):
 
     # initialize model
     model = Transformer_Encoder(
@@ -172,7 +163,7 @@ def start(args):
         optimizer, 
         scheduler,
         num_epochs  = parameters["num_epoch"],
-        save_path   = './weight/best_skeleton_model.pth',          # TODO: include date/model name in output filename
+        save_path   = './weight/best_skeleton_model.pth',
         device      = device
     )
 
@@ -189,7 +180,7 @@ def start(args):
             'num_joints'        : parameters["num_joints"]
         }
     }
-    torch.save(final_checkpoint, './weight/final_skeleton_model.pth')   # TODO: include date/model name in output filename
+    torch.save(final_checkpoint, './weight/final_skeleton_model.pth')
     return
 
 

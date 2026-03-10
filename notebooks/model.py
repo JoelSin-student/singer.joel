@@ -1,6 +1,6 @@
 # File for building deep learning models
 #
-# TODO: Improve training summary output (runtime, best loss, epoch, etc.)
+#
 # 
 #
 import pandas as pd 
@@ -45,7 +45,7 @@ class Transformer_Encoder(nn.Module):
             nn.Dropout(dropout),            # Prevent overfitting
             nn.Linear(d_model, d_model))    # Adjust dimensionality
 
-        # positional encording
+        # positional encoding
         self.positional_encoder = PositionalEncoding(d_model)
 
         # transformer encoder
@@ -75,7 +75,7 @@ class Transformer_Encoder(nn.Module):
     
     def forward(self, x):
         features = self.feature_extractor(x)                     # Feature extraction
-        features = self.positional_encoder(features)             # positional encording
+        features = self.positional_encoder(features)             # positional encoding
         transformer_output = self.transformer_encoder(features)  # Transformer encoder pass
         last_time_step_output = transformer_output[:, -1, :]     # Use representation of last time step
         output = self.output_decoder(last_time_step_output)      # Generate output
@@ -192,14 +192,14 @@ def load_Transformer_Encoder(model, optimizer, scheduler, checkpoint_path):
     return model, optimizer, scheduler, epoch, best_val_loss
 
 
-def save_predictions(predictions, model):          # Consider moving this function out of model.py.
+def save_predictions(predictions, model):
     # Convert predictions to DataFrame
     num_joints = predictions.shape[1] // 3
     columns = []
     for i in range(num_joints):
         columns.extend([f'X.{i}', f'Y.{i}', f'Z.{i}'])
 
-    output_file='./output/predicted_skeleton.csv'       # TODO: include model name/timestamp in filename.
+    output_file='./output/predicted_skeleton.csv'
     
     df_predictions = pd.DataFrame(predictions, columns=columns)
     df_predictions.to_csv(output_file, index=False)
