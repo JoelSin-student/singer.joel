@@ -8,7 +8,7 @@ import pandas as pd
 import io
 import sys
 import plotly.graph_objects as go
-from processor.loader import load_config
+from notebooks.loader import load_config
 
 def start(args):
 

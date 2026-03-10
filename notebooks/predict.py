@@ -1,7 +1,7 @@
 # Prediction processor
 #
-# TODO: Add "successfully" logs for each step.
-# TODO: Allow switching models from command line.
+#
+#
 #
 import numpy as np
 import pandas as pd
@@ -10,8 +10,8 @@ import joblib
 import torch
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
-from processor.loader import get_datapath_pairs, load_and_combine_data, restructure_insole_data, load_config, PressureDataset
-from processor.model import Transformer_Encoder, save_predictions
+from notebooks.loader import get_datapath_pairs, load_and_combine_data, restructure_insole_data, load_config, PressureDataset
+from notebooks.model import Transformer_Encoder, save_predictions
 
 def start(args):
 
@@ -23,9 +23,9 @@ def start(args):
     insole_dir   = config["location"]["data_path"] + "/Insole/"
     
     # Preprocess skeleton and insole data
-    skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)                           # Collect paired skeleton/insole file paths
-    skeleton_df, insole_left_df, insole_right_df  = load_and_combine_data(skeleton_insole_datapath_pairs)   # Load skeleton, right-insole, and left-insole data
-    pressure_lr_df, IMU_lr_df = restructure_insole_data(insole_left_df, insole_right_df)                    # Split pressure/IMU and merge left+right
+    skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)     # Collect paired skeleton/insole file paths
+    skeleton_df, insole_df  = load_and_combine_data(skeleton_insole_datapath_pairs)   # Load skeleton, right-insole, and left-insole data
+    pressure_lr_df, IMU_lr_df = restructure_insole_data(insole_df)                    # Split pressure/IMU and merge left+right
 
     # Initialize scalers
     pressure_normalizer = MinMaxScaler()
@@ -50,18 +50,13 @@ def start(args):
         "input_dim"          : pressure_lr_df.shape[1] + IMU_lr_df.shape[1], # Total dims of pressure + gyro + acceleration
         "num_joints"         : skeleton_df.shape[1] // 3,  # Divide by 3 for 3D coordinates
         "num_dims"           :  3,
-        "checkpoint_file"    : config["predict"]["checkpoint_file"] # TODO: allow dynamic path input
+        "checkpoint_file"    : config["predict"]["checkpoint_file"]
     }
-
-    # # For derivative-based features
-    # calculate_grad()
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-
-    # TODO: Support different input branches depending on model input format.
 
     # Initialize model (using fixed parameters)
     model = Transformer_Encoder(

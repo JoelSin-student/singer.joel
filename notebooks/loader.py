@@ -99,7 +99,7 @@ def load_and_combine_data(data_pairs):
     Args:
         data_pairs (dict): Object with tags as keys and file-path dictionaries as values.
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame]: Tuple of concatenated skeleton and insole DataFrames.
+        tuple (pd.DataFrame, pd.DataFrame): Tuple of concatenated skeleton and insole DataFrames.
     """
     # Create lists to store each data category
     all_skeleton_df = []
@@ -122,7 +122,7 @@ def restructure_insole_data(insole_df):
     Args:
         insole_df (pd.DataFrame): DataFrame containing insole data.
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame]: Tuple of split/re-combined DataFrames.
+        tuple (pd.DataFrame, pd.DataFrame): Tuple of split/re-combined DataFrames.
     """
     # Extract sensor groups from left-foot data
     pressure_lr = insole_df.drop(["left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
@@ -146,7 +146,7 @@ def calculate_grad(pressure_lr, IMU_lr):
         pressure_lr (np): Pressure-sensor time-series data.
         IMU_lr (np): IMU time-series data.
     Returns:
-        tuple[np, np]: Tuple containing expanded feature arrays.
+        tuple (np, np): Tuple containing expanded feature arrays.
     """
     # First/second derivative features (optional)
     pressure_grad1 = np.gradient(pressure_lr, axis=0)
@@ -204,7 +204,7 @@ class PressureSkeletonDataset(Dataset):
         sequence_length (int): Number of frames fed to the model.
 
     Returns:
-        tuple[torch.Tensor, torch.Tensor]:
+        tuple (torch.Tensor, torch.Tensor):
             - Input tensor with shape sequence_len x feature_dim
             - Target tensor with shape feature_dim_skeleton
     """

@@ -29,8 +29,6 @@ def start(args):
     skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)     # Collect paired skeleton/insole file paths
     skeleton_df, insole_df  = load_and_combine_data(skeleton_insole_datapath_pairs)   # Load skeleton, right-insole, and left-insole data
     pressure_lr_df, IMU_lr_df = restructure_insole_data(insole_df)                    # Split pressure/IMU and merge left+right
-    if config["train"]["use_gradient_data"] == True: calculate_grad()                 # Add derivative features
-    # But does it really add the values to the preceding dfs? I think it just calculates and then discards the results. Need to check this.
 
     # Temporary handling added for test4 data
     skeleton_df = skeleton_df.fillna(method='bfill').fillna(method='ffill')
@@ -39,7 +37,7 @@ def start(args):
     pressure_lr_df = pressure_lr_df.apply(lambda x: gaussian_filter1d(x, sigma=sigma))      # Temporarily added smoothing
     IMU_lr_df = IMU_lr_df.apply(lambda x: gaussian_filter1d(x, sigma=sigma))
 
-    # Sprit data
+    # Split data
     # Skeletal data, pressure data, and IMU data are each split 8:2
     train_pressure, val_pressure, train_IMU, val_IMU, train_skeleton, val_skeleton = train_test_split(
         pressure_lr_df, 
@@ -57,9 +55,13 @@ def start(args):
     # Fit the scaler on the training data and transform
     train_pressure_scaled = pressure_normalizer.fit_transform(train_pressure)  # Training pressure data (fit + transform)
     train_IMU_scaled      = imu_normalizer.fit_transform(train_IMU)            # Training IMU data (fit + transform)
+    if config["train"]["use_gradient_data"] == True: 
+        train_pressure_scaled, train_IMU_scaled = calculate_grad(train_pressure_scaled, train_IMU_scaled)         # Add derivative features
     # train_skeleton_scaled = skeleton_scaler.fit_transform(train_skeleton)    # Training skeleton data (fit + transform)
     val_pressure_scaled   = pressure_normalizer.transform(val_pressure)        # Validation pressure data (transform)
     val_IMU_scaled        = imu_normalizer.transform(val_IMU)                  # Validation IMU data (transform)
+    if config["train"]["use_gradient_data"] == True: 
+        val_pressure_scaled, val_IMU_scaled = calculate_grad(val_pressure_scaled, val_IMU_scaled)         # Add derivative features
     # val_skeleton_scaled   = skeleton_scaler.transform(val_skeleton)          # Validation skeleton data (transform)
 
     # save scaler
