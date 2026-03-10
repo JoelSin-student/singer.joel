@@ -31,4 +31,4 @@ train:
 
   # others
   sequence_len: 30
-  use_gradient_data: False
+  use_gradient_data: True
