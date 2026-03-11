@@ -12,6 +12,7 @@ import time
 import torch
 from collections import defaultdict
 from torch.utils.data import Dataset
+from scipy.signal import savgol_filter
 
 def load_config(args,config_path, model):
     """Load a YAML file from the given path and return it as a Python object.
@@ -125,7 +126,7 @@ def restructure_insole_data(insole_df):
         tuple (pd.DataFrame, pd.DataFrame): Tuple of split/re-combined DataFrames.
     """
     # Extract sensor groups from left-foot data
-    pressure_lr = insole_df.drop(["left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
+    pressure_lr = insole_df.drop(["time","left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
                                   "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
                                   "left total force[N]","left center of pressure X[-0.5...+0.5]","left center of pressure Y[-0.5...+0.5]",
                                   "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
@@ -140,29 +141,38 @@ def restructure_insole_data(insole_df):
     return pressure_lr, IMU_lr
 
 
-def calculate_grad(pressure_lr, IMU_lr):
-    """Compute 1st/2nd derivatives for pressure and IMU, then concatenate.
+def calculate_grad(pressure_lr, IMU_lr, window_length=9, polyorder=3):
+    """Compute smoothed 1st/2nd derivatives, concatenate, and normalize.
     Args:
-        pressure_lr (np): Pressure-sensor time-series data.
-        IMU_lr (np): IMU time-series data.
+        pressure_lr (array-like): Pressure-sensor time-series data.
+        IMU_lr (array-like): IMU time-series data.
+        window_length (int): Savitzky-Golay filter window length (must be odd).
+        polyorder (int): Polynomial order for Savitzky-Golay filter.
     Returns:
-        tuple (np, np): Tuple containing expanded feature arrays.
+        tuple (np.ndarray, np.ndarray): Normalized expanded feature arrays.
     """
-    # First/second derivative features (optional)
-    pressure_grad1 = np.gradient(pressure_lr, axis=0)
-    pressure_grad2 = np.gradient(pressure_grad1, axis=0)
-    IMU_grad1 = np.gradient(IMU_lr, axis=0)
-    IMU_grad2 = np.gradient(IMU_grad1, axis=0)
-    pressure_features = np.concatenate([
-        pressure_lr,
-        pressure_grad1,
-        pressure_grad2,
-    ], axis=1)
-    IMU_features = np.concatenate([
-        IMU_lr,
-        IMU_grad1,
-        IMU_grad2,
-    ], axis=1)
+    # Convert to numpy arrays
+    pressure_arr = np.asarray(pressure_lr, dtype=np.float32)
+    IMU_arr = np.asarray(IMU_lr, dtype=np.float32)
+
+    # Smooth before each derivative stage using Savitzky-Golay filter
+    pressure_smooth = savgol_filter(pressure_arr, window_length=window_length, polyorder=polyorder, axis=0, mode='nearest')
+    pressure_grad1 = np.gradient(pressure_smooth, axis=0)
+    pressure_grad1_smooth = savgol_filter(pressure_grad1, window_length=window_length, polyorder=polyorder, axis=0, mode='nearest')
+    pressure_grad2 = np.gradient(pressure_grad1_smooth, axis=0)
+
+    IMU_smooth = savgol_filter(IMU_arr, window_length=window_length, polyorder=polyorder, axis=0, mode='nearest')
+    IMU_grad1 = np.gradient(IMU_smooth, axis=0)
+    IMU_grad1_smooth = savgol_filter(IMU_grad1, window_length=window_length, polyorder=polyorder, axis=0, mode='nearest')
+    IMU_grad2 = np.gradient(IMU_grad1_smooth, axis=0)
+
+    # Concatenate original + derivatives
+    pressure_features = np.concatenate([pressure_arr, pressure_grad1, pressure_grad2], axis=1)
+    IMU_features = np.concatenate([IMU_arr, IMU_grad1, IMU_grad2], axis=1)
+
+    # Z-score normalization: (x - mean) / std per feature
+    pressure_features = (pressure_features - pressure_features.mean(axis=0)) / (pressure_features.std(axis=0) + 1e-8)
+    IMU_features = (IMU_features - IMU_features.mean(axis=0)) / (IMU_features.std(axis=0) + 1e-8)
 
     return pressure_features, IMU_features
     
