@@ -1,6 +1,6 @@
 # Visualization code
-# TODO: Add an argument to toggle presence of ground truth.
-# TODO: Improve both visualization UI and logging output.
+#
+#
 #
 #
 import argparse
@@ -22,13 +22,14 @@ def start(args):
     # Same settings block
     start_frame = 0
     # end_frame = min(len(frames_data_real), len(frames_data_pred))
-    step = 50
+    step = 30
 
-    # skeleton definition
+    # skeleton definition (based on MVN User Manual 2025)
     bones = [
-        (0, 1), (1, 2), (2, 3), (3, 4),                               # Spine
-        (5, 6), (6, 7), (7, 8), (9, 10), (10, 11), (11, 12), (5, 9),  # Hands, elbows, shoulders
-        (13, 14), (14, 15), (15, 16), (17, 18), (18, 19), (19, 20), (13, 17)  # Feet and hips
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7),                     # Spine from Pelvis to Head
+        (4, 8), (4, 12), (8, 9), (9, 10), (10, 11), (12, 13), (13, 14), (14, 15),   # (right and left) Scapula, Clavicules, Arms, Forearms
+        (0, 16), (0, 20), (16, 20),                                                 # Pelvis (trick to connect rigidly connect the two sides and the lower spine)
+        (16, 17), (17, 18), (18, 19), (20, 21), (21, 22), (22, 23)                  # (right and left) Thighs, Legs, Feet
     ]
 
     # Normalize/align skeleton coordinate columns

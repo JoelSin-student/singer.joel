@@ -7,4 +7,4 @@ location:
 visualization:
   
   start_frame: 0
-  step: 50
+  step: 30

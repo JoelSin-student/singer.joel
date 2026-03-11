@@ -54,7 +54,7 @@ PressInPose ([Gao *et al.*, 2024](https://doi.org/10.1145/3699773)) -> very simi
 1. Understand code behaviour and links.
 2. Adjust entry:
     - change paths and names,
-    - adapt/add sample rate synchronising (60 Hz, Awinda),
+    - adapt/add sample rate synchronising (60 Hz, Awinda) and other preprocessing steps (change df col names, ...),
     - adapt scales and dimensionnality (including transformer hyperparameters related to input and output dimensions).
 3. Adjust classes, functions and variables if needed.
     - especially the sensors'  and skeleton's coordinates tables
