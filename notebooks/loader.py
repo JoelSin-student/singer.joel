@@ -50,7 +50,7 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
         insole_dir (str): Directory containing insole files (Soles_*.txt).
     Returns:
         defaultdict: Dictionary keyed by tag.
-            Value format: `{tag:{'skeleton': str, 'insole': list[str]}}`
+            Value format: `{tag:{'skeleton': str, 'insole': str}}`
     """
     # Show data paths
     print("---"*20)
@@ -64,7 +64,7 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
     insole_files = glob.glob(os.path.join(insole_dir, "Soles_*.txt"))
 
     # Create dictionary to store skeleton/insole data pairs
-    data_pairs = defaultdict(lambda: {'skeleton': None, 'insole': []})
+    data_pairs = defaultdict(lambda: {'skeleton': None, 'insole': None})
 
     # Extract tags from skeleton files and store them
     for file_path in skeleton_files:
@@ -79,7 +79,13 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
 
         # Add only when the matching skeleton file exists
         if tag in data_pairs:
-            data_pairs[tag]['insole'].append(file_path)
+            if data_pairs[tag]['insole'] is None:
+                data_pairs[tag]['insole'] = file_path
+            else:
+                raise ValueError(
+                    f"Duplicate insole file found for tag '{tag}': "
+                    f"'{data_pairs[tag]['insole']}' and '{file_path}'"
+                )
 
     # Print extracted pairing results
     data_i=0
@@ -88,7 +94,7 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
         print(f"")
         print(f"Data_{data_i}_{tag}")
         print(f"skeleton: {paths['skeleton']}")
-        print(*[f"insole: {f}" for f in sorted(paths['insole'])], sep='\n')
+        print(f"insole: {paths['insole']}")
         time.sleep(0.3)
     print("---"*20)
 
@@ -108,11 +114,20 @@ def load_and_combine_data(data_pairs):
     
     # Load each file as DataFrame and append to lists
     for tag, paths in data_pairs.items():
-        skeleton_df     = pd.read_csv(paths['skeleton'])
-        insole_df  = pd.read_csv(paths['insole'], sep="\t", comment="#")
+        if paths['skeleton'] is None:
+            raise ValueError(f"Missing skeleton file for tag '{tag}'")
+
+        if paths['insole'] is None:
+            raise ValueError(f"Missing insole file for tag '{tag}'")
+
+        skeleton_df = pd.read_csv(paths['skeleton'])
+        insole_df = pd.read_csv(paths['insole'], sep="\t", comment="#")
 
         all_skeleton_df.append(skeleton_df)
         all_insole_df.append(insole_df)
+
+    if not all_skeleton_df or not all_insole_df:
+        raise ValueError("No valid skeleton/insole pairs were found to load.")
 
     return (pd.concat(all_skeleton_df, ignore_index=True),
             pd.concat(all_insole_df, ignore_index=True))
@@ -126,7 +141,7 @@ def restructure_insole_data(insole_df):
         tuple (pd.DataFrame, pd.DataFrame): Tuple of split/re-combined DataFrames.
     """
     # Extract sensor groups from left-foot data
-    pressure_lr = insole_df.drop(["time","left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
+    pressure_lr = insole_df.drop(["# time","left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
                                   "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
                                   "left total force[N]","left center of pressure X[-0.5...+0.5]","left center of pressure Y[-0.5...+0.5]",
                                   "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
