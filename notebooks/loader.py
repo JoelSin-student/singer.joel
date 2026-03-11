@@ -121,7 +121,12 @@ def load_and_combine_data(data_pairs):
             raise ValueError(f"Missing insole file for tag '{tag}'")
 
         skeleton_df = pd.read_csv(paths['skeleton'])
-        insole_df = pd.read_csv(paths['insole'], sep="\t", comment="#")
+        # Drop non-coordinate columns (Frame, index, etc.) from skeleton data
+        skeleton_df = skeleton_df.drop(columns=['Frame'], errors='ignore')
+        
+        # Insole files may be comma- or tab-delimited; do not strip header with comment markers.
+        insole_df = pd.read_csv(paths['insole'], engine='python')
+        insole_df.columns = insole_df.columns.str.strip()
 
         all_skeleton_df.append(skeleton_df)
         all_insole_df.append(insole_df)
@@ -140,18 +145,37 @@ def restructure_insole_data(insole_df):
     Returns:
         tuple (pd.DataFrame, pd.DataFrame): Tuple of split/re-combined DataFrames.
     """
-    # Extract sensor groups from left-foot data
-    pressure_lr = insole_df.drop(["# time","left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
-                                  "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
-                                  "left total force[N]","left center of pressure X[-0.5...+0.5]","left center of pressure Y[-0.5...+0.5]",
-                                  "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
-                                  "right angular X[dps]","right angular Y[dps]","right angular Z[dps]",
-                                  "right total force[N]","right center of pressure X[-0.5...+0.5]","right center of pressure Y[-0.5...+0.5]",
-                                  "right steps[]","left steps[]"],axis=1)
-    IMU_lr      = insole_df[["left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
-                             "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
-                             "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
-                             "right angular X[dps]","right angular Y[dps]","right angular Z[dps]"]]
+    insole_df = insole_df.copy()
+    insole_df.columns = insole_df.columns.str.strip()
+
+    # Normalize time-column naming across pipelines.
+    if '# time' not in insole_df.columns and 'time' in insole_df.columns:
+        insole_df = insole_df.rename(columns={'time': '# time'})
+
+    imu_cols = [
+        "left acceleration X[g]", "left acceleration Y[g]", "left acceleration Z[g]",
+        "left angular X[dps]", "left angular Y[dps]", "left angular Z[dps]",
+        "right acceleration X[g]", "right acceleration Y[g]", "right acceleration Z[g]",
+        "right angular X[dps]", "right angular Y[dps]", "right angular Z[dps]"
+    ]
+
+    missing_imu = [c for c in imu_cols if c not in insole_df.columns]
+    if missing_imu:
+        raise KeyError(
+            f"Required IMU columns were not found. Missing: {missing_imu}. "
+            f"Available columns start with: {list(insole_df.columns[:10])}"
+        )
+
+    drop_from_pressure = [
+        "# time",
+        *imu_cols,
+        "left total force[N]", "left center of pressure X[-0.5...+0.5]", "left center of pressure Y[-0.5...+0.5]",
+        "right total force[N]", "right center of pressure X[-0.5...+0.5]", "right center of pressure Y[-0.5...+0.5]",
+        "right steps[]", "left steps[]"
+    ]
+
+    pressure_lr = insole_df.drop(columns=drop_from_pressure, errors='ignore')
+    IMU_lr = insole_df[imu_cols]
 
     return pressure_lr, IMU_lr
 

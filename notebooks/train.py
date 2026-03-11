@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import argparse
 import joblib
+from requests import head
 import torch
 from torch.utils.data import DataLoader
 from scipy.ndimage import gaussian_filter1d
@@ -31,7 +32,7 @@ def start(args):
     pressure_lr_df, IMU_lr_df = restructure_insole_data(insole_df)                    # Split pressure/IMU and merge left+right
 
     # Temporary handling added for test4 data
-    skeleton_df = skeleton_df.fillna(method='bfill').fillna(method='ffill')
+    skeleton_df = skeleton_df.bfill().ffill()
 
     sigma=2
     pressure_lr_df = pressure_lr_df.apply(lambda x: gaussian_filter1d(x, sigma=sigma))      # Temporarily added smoothing
@@ -95,7 +96,7 @@ def start(args):
         # others
         "use_gradient_data"  : config["train"]["use_gradient_data"],
         "sequence_len"       : config["train"]["sequence_len"],
-        "input_dim"          : pressure_lr_df.shape[1] + IMU_lr_df.shape[1], # Total dims of pressure + gyro + acceleration
+        "input_dim"          : train_input_feature.shape[1], # Use actual expanded feature dimension (accounts for gradient expansion)
         "num_joints"         : skeleton_df.shape[1] // 3,                    # Divide by 3 for 3D coordinates
         "num_dims"           :  3
     }

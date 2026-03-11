@@ -25,7 +25,7 @@ def main():
         subparsers.add_parser(name, parents=[module.get_parser()], add_help=False)
 
     # read arguments
-    arg = parser.parse_args()       # get comandline argments
+    arg = parser.parse_args()       # get commandline arguments
     
     # start
     exep = processors[arg.mode]     # set processor mode

@@ -1,4 +1,12 @@
 # KickCap first tries on existing pipelines
+
+## How to use
+
+
+## How it is organised
+
+
+## Logic
 Project of the Python-R-Git course, focused on the technical aspect of the research question I try to answer (so far) during my M1 internship.
 
 This repository aims at trying to incorporate the data we collected into already existing code from the literature. This requires to understand the code so as to adapt it to the structure of my data.
