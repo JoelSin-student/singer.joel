@@ -136,7 +136,7 @@ def restructure_insole_data(insole_df):
     IMU_lr      = insole_df[["left acceleration X[g]","left acceleration Y[g]","left acceleration Z[g]",
                              "left angular X[dps]","left angular Y[dps]","left angular Z[dps]",
                              "right acceleration X[g]","right acceleration Y[g]","right acceleration Z[g]",
-                             "right angular X[dps]","right angular Y[dps]","right angular Z[dps]","right steps[]","left steps[]"]]
+                             "right angular X[dps]","right angular Y[dps]","right angular Z[dps]"]]
 
     return pressure_lr, IMU_lr
 

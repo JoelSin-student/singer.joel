@@ -26,10 +26,10 @@ def start(args):
 
     # skeleton definition (based on MVN User Manual 2025)
     bones = [
-        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7),                     # Spine from Pelvis to Head
-        (4, 8), (4, 12), (8, 9), (9, 10), (10, 11), (12, 13), (13, 14), (14, 15),   # (right and left) Scapula, Clavicules, Arms, Forearms
-        (0, 16), (0, 20), (16, 20),                                                 # Pelvis (trick to connect rigidly connect the two sides and the lower spine)
-        (16, 17), (17, 18), (18, 19), (20, 21), (21, 22), (22, 23)                  # (right and left) Thighs, Legs, Feet
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),                     # Spine from Pelvis to Head
+        (4, 7), (4, 11), (7, 8), (8, 9), (9, 10), (11, 12), (12, 13), (13, 14),   # (right and left) Scapula, Clavicules, Arms, Forearms
+        (0, 15), (0, 19), (15, 19),                                                 # Pelvis (trick to connect rigidly connect the two sides and the lower spine)
+        (15, 16), (16, 17), (17, 18), (19, 20), (20, 21), (21, 22)                  # (right and left) Thighs, Legs, Feet
     ]
 
     # Normalize/align skeleton coordinate columns
