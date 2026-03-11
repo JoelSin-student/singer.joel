@@ -45,8 +45,8 @@ def load_config(args,config_path, model):
 def get_datapath_pairs(skeleton_dir, insole_dir):
     """Pair skeleton/insole file paths sharing the same tag from directories.
     Args:
-        skeleton_dir (str): Directory containing skeleton files (*_skeleton.csv).
-        insole_dir (str): Directory containing insole files (*_Insole_*.csv).
+        skeleton_dir (str): Directory containing skeleton files (Awinda_*.csv).
+        insole_dir (str): Directory containing insole files (Soles_*.txt).
     Returns:
         defaultdict: Dictionary keyed by tag.
             Value format: `{tag:{'skeleton': str, 'insole': list[str]}}`
@@ -59,8 +59,8 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
     time.sleep(0.5)
 
     # Get all CSV files in each folder
-    skeleton_files = glob.glob(os.path.join(skeleton_dir, "*_skeleton.csv"))
-    insole_files = glob.glob(os.path.join(insole_dir, "*_Insole_*.csv"))
+    skeleton_files = glob.glob(os.path.join(skeleton_dir, "Awinda_*.csv"))
+    insole_files = glob.glob(os.path.join(insole_dir, "Soles_*.txt"))
 
     # Create dictionary to store skeleton/insole data pairs
     data_pairs = defaultdict(lambda: {'skeleton': None, 'insole': []})
@@ -68,13 +68,13 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
     # Extract tags from skeleton files and store them
     for file_path in skeleton_files:
         filename = os.path.basename(file_path)
-        tag = filename.replace('_skeleton.csv', '')
+        tag = filename.split('_', 1)[1].rsplit('.', 1)[0]  # Extract tag between first underscore and file extension
         data_pairs[tag]['skeleton'] = file_path
     
     # Extract tags from insole files and store them
     for file_path in insole_files:
         filename = os.path.basename(file_path)
-        tag = filename.split('_Insole_')[0]
+        tag = filename.split('_', 1)[1].rsplit('.', 1)[0]
 
         # Add only when the matching skeleton file exists
         if tag in data_pairs:
@@ -108,7 +108,7 @@ def load_and_combine_data(data_pairs):
     # Load each file as DataFrame and append to lists
     for tag, paths in data_pairs.items():
         skeleton_df     = pd.read_csv(paths['skeleton'])
-        insole_df  = pd.read_csv(paths['insole'])
+        insole_df  = pd.read_csv(paths['insole'], sep="\t", comment="#")
 
         all_skeleton_df.append(skeleton_df)
         all_insole_df.append(insole_df)

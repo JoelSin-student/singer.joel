@@ -9,9 +9,9 @@ import importlib as iml
 def main():
     # make processor
     processors = {
-        'train': iml.import_module('processor.train'),
-        'predict': iml.import_module('processor.predict'),
-        'visual': iml.import_module('processor.visualization'),
+        'train': iml.import_module('notebooks.train'),
+        'predict': iml.import_module('notebooks.predict'),
+        'visual': iml.import_module('notebooks.visualization'),
         # 'evaluation': iml.import_module('processor.evaluation'),
         # 'module': iml.import_module('processor.module'),
     }
