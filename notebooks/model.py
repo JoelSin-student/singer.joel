@@ -7,6 +7,7 @@ import pandas as pd
 import math
 import time
 import datetime
+import os
 from tqdm import tqdm
 import torch 
 import torch.nn as nn
@@ -26,7 +27,6 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        # x shape: [batch_size, sequence_len, d_model]
         x = x + self.pe[:, :x.size(1)]
         return x
 
@@ -89,12 +89,34 @@ class Skeleton_Loss(nn.Module):
         self.beta = beta
         
     def forward(self, pred, target):
-        mse_loss = F.mse_loss(pred, target)  # Simple MSE loss
-        return mse_loss
+        mse_loss = F.mse_loss(pred, target)                  # Reconstruction loss
+        pred_var = pred.var(dim=0).mean()                    # Mean per-joint variance across the batch
+        return self.alpha * mse_loss - self.beta * pred_var  # Subtract variance to penalize collapsed predictions
     
 
-def train_Transformer_Encoder(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, save_path, device):
+def train_Transformer_Encoder(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    scheduler,
+    num_epochs,
+    save_path,
+    device,
+    min_output_variance=1e-5,
+    collapse_penalty_weight=1000.0,
+):
     best_val_loss = float('inf')
+    best_score = float('inf')
+
+    model_config = {
+        'input_dim': model.feature_extractor[0].in_features,
+        'd_model': model.feature_extractor[0].out_features,
+        'nhead': model.transformer_encoder.layers[0].self_attn.num_heads,
+        'num_encoder_layers': len(model.transformer_encoder.layers),
+        'num_joints': model.num_joints,
+    }
 
     # Record start time
     start_time = time.time()
@@ -108,7 +130,7 @@ def train_Transformer_Encoder(model, train_loader, val_loader, criterion, optimi
         train_loss = 0.0
         
         train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} Train", leave=False)
-        for pressure, skeleton in train_pbar:  # NOTE: variable names can be improved.
+        for pressure, skeleton in train_pbar:
             pressure = pressure.to(device)     # Move data to device
             skeleton = skeleton.to(device)
             
@@ -125,6 +147,7 @@ def train_Transformer_Encoder(model, train_loader, val_loader, criterion, optimi
         # Validation phase
         model.eval()
         val_loss = 0.0
+        val_output_var = 0.0
         
         val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1} Val", leave=False)
         with torch.no_grad():
@@ -135,10 +158,15 @@ def train_Transformer_Encoder(model, train_loader, val_loader, criterion, optimi
                 outputs = model(pressure)
                 loss = criterion(outputs, skeleton)
                 val_loss += loss.item()
+                val_output_var += float(outputs.var(dim=0, unbiased=False).mean().item())
         
         # Compute average losses
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
+        avg_val_output_var = val_output_var / len(val_loader)
+
+        collapse_penalty = max(0.0, float(min_output_variance) - avg_val_output_var)
+        score = avg_val_loss + float(collapse_penalty_weight) * collapse_penalty
         
         # Scheduler step
         scheduler.step(avg_val_loss)
@@ -161,24 +189,31 @@ def train_Transformer_Encoder(model, train_loader, val_loader, criterion, optimi
 
         print(f'------------ Epoch {epoch+1}/{num_epochs} ------------\n'
               f'Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}\n'
+              f'Val Output Var: {avg_val_output_var:.8f} | Score: {score:.6f}\n'
               f'LR        : {current_lr:.5f}\n'
               f'Time/epoch: {epoch_time_m}m {epoch_time_s}s | Total: {elaps_time_m}m {elaps_time_s}s\n'
               f'Estimated Finish: {est_finish_str}')
         
         pre_time = end_time
         
-        # Save best model checkpoint
-        if avg_val_loss < best_val_loss:
+        # Save best model checkpoint using loss + collapse penalty score.
+        if score < best_score:
             best_val_loss = avg_val_loss
+            best_score = score
             checkpoint = {
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
                 'best_val_loss': best_val_loss,
+                'best_score': best_score,
+                'best_val_output_variance': avg_val_output_var,
+                'min_output_variance': float(min_output_variance),
+                'collapse_penalty_weight': float(collapse_penalty_weight),
+                'model_config': model_config,
             }
             torch.save(checkpoint, save_path)
-            print(f'>> Model saved at epoch {epoch+1}')
+            print(f'>> Model saved at epoch {epoch+1} (score={best_score:.6f})')
 
 
 def load_Transformer_Encoder(model, optimizer, scheduler, checkpoint_path):
@@ -192,16 +227,25 @@ def load_Transformer_Encoder(model, optimizer, scheduler, checkpoint_path):
     return model, optimizer, scheduler, epoch, best_val_loss
 
 
-def save_predictions(predictions, model):
+def save_predictions(predictions, model, frame_indices=None, output_stem=None):
     # Convert predictions to DataFrame
     num_joints = predictions.shape[1] // 3
     columns = []
     for i in range(num_joints):
         columns.extend([f'X.{i}', f'Y.{i}', f'Z.{i}'])
 
-    output_file='./output/predicted_skeleton.csv'
+    output_name = f'Predicted_skeleton_{output_stem}' if output_stem else 'Predicted_skeleton'
+    output_file = f'./results/output/{output_name}.csv'
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
     df_predictions = pd.DataFrame(predictions, columns=columns)
+    if frame_indices is not None:
+        if len(frame_indices) != len(df_predictions):
+            raise ValueError(
+                f"Length mismatch: frame_indices has {len(frame_indices)} rows but "
+                f"predictions has {len(df_predictions)} rows"
+            )
+        df_predictions.insert(0, 'Frame', frame_indices)
     df_predictions.to_csv(output_file, index=False)
     print(f"Predictions saved to {output_file}")
 

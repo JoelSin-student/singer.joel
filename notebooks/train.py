@@ -6,8 +6,6 @@
 import pandas as pd
 import numpy as np
 import argparse
-import joblib
-from requests import head
 import torch
 from torch.utils.data import DataLoader
 from scipy.ndimage import gaussian_filter1d
@@ -35,7 +33,7 @@ def start(args):
     skeleton_df = skeleton_df.bfill().ffill()
 
     sigma=2
-    pressure_lr_df = pressure_lr_df.apply(lambda x: gaussian_filter1d(x, sigma=sigma))      # Temporarily added smoothing
+    pressure_lr_df = pressure_lr_df.apply(lambda x: gaussian_filter1d(x, sigma=sigma))      # Added smoothing
     IMU_lr_df = IMU_lr_df.apply(lambda x: gaussian_filter1d(x, sigma=sigma))
 
     # Split data
@@ -51,23 +49,16 @@ def start(args):
     # Initialize scaler
     pressure_normalizer = MinMaxScaler()
     imu_normalizer      = MinMaxScaler()
-    # skeleton_scaler     = MinMaxScaler()
 
     # Fit the scaler on the training data and transform
     train_pressure_scaled = pressure_normalizer.fit_transform(train_pressure)  # Training pressure data (fit + transform)
     train_IMU_scaled      = imu_normalizer.fit_transform(train_IMU)            # Training IMU data (fit + transform)
     if config["train"]["use_gradient_data"] == True: 
         train_pressure_scaled, train_IMU_scaled = calculate_grad(train_pressure_scaled, train_IMU_scaled)         # Add derivative features
-    # train_skeleton_scaled = skeleton_scaler.fit_transform(train_skeleton)    # Training skeleton data (fit + transform)
     val_pressure_scaled   = pressure_normalizer.transform(val_pressure)        # Validation pressure data (transform)
     val_IMU_scaled        = imu_normalizer.transform(val_IMU)                  # Validation IMU data (transform)
     if config["train"]["use_gradient_data"] == True: 
         val_pressure_scaled, val_IMU_scaled = calculate_grad(val_pressure_scaled, val_IMU_scaled)         # Add derivative features
-    # val_skeleton_scaled   = skeleton_scaler.transform(val_skeleton)          # Validation skeleton data (transform)
-
-    # save scaler
-    # When I predict the model, I need to use same scaler.
-    # joblib.dump(skeleton_scaler, './scaler/skeleton_scaler.pkl')
 
     # combine pressure data and IMU data
     train_input_feature = np.concatenate([train_pressure_scaled, train_IMU_scaled], axis=1)
@@ -95,6 +86,8 @@ def start(args):
 
         # others
         "use_gradient_data"  : config["train"]["use_gradient_data"],
+        "min_output_variance": config["train"].get("min_output_variance", 1e-5),
+        "collapse_penalty_weight": config["train"].get("collapse_penalty_weight", 1000.0),
         "sequence_len"       : config["train"]["sequence_len"],
         "input_dim"          : train_input_feature.shape[1], # Use actual expanded feature dimension (accounts for gradient expansion)
         "num_joints"         : skeleton_df.shape[1] // 3,                    # Divide by 3 for 3D coordinates
@@ -109,8 +102,8 @@ def start(args):
     print(f"Using device: {device}")
 
     # make dataset
-    train_dataset = PressureSkeletonDataset(train_input_feature, train_skeleton.to_numpy(), sequence_length=parameters["sequence_len"])   # train_skeleton_scaled
-    val_dataset = PressureSkeletonDataset(val_input_feature, val_skeleton.to_numpy(), sequence_length=parameters["sequence_len"])         # val_skeleton_scaled
+    train_dataset = PressureSkeletonDataset(train_input_feature, train_skeleton.to_numpy(), sequence_length=parameters["sequence_len"])
+    val_dataset = PressureSkeletonDataset(val_input_feature, val_skeleton.to_numpy(), sequence_length=parameters["sequence_len"])
     
     # set dataloader
     train_loader = DataLoader(
@@ -166,8 +159,10 @@ def start(args):
         optimizer, 
         scheduler,
         num_epochs  = parameters["num_epoch"],
-        save_path   = './weight/best_skeleton_model.pth',
-        device      = device
+        save_path   = './results/weight/best_skeleton_model.pth',
+        device      = device,
+        min_output_variance=parameters["min_output_variance"],
+        collapse_penalty_weight=parameters["collapse_penalty_weight"],
     )
 
     # keep checkpoint
@@ -183,7 +178,7 @@ def start(args):
             'num_joints'        : parameters["num_joints"]
         }
     }
-    torch.save(final_checkpoint, './weight/final_skeleton_model.pth')
+    torch.save(final_checkpoint, './results/weight/final_skeleton_model.pth')
     return
 
 
@@ -215,9 +210,5 @@ def get_parser(add_help=False):
     # Loss function parameters
     parser.add_argument('--loss_alpha', type=float, default=None)
     parser.add_argument('--loss_beta', type=float, default=0.1)
-
-    # Processor
-    # feeder
-    # model
 
     return parser

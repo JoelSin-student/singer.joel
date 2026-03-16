@@ -23,7 +23,7 @@ def load_config(args,config_path, model):
     """
     # If config_path is not provided, infer it from model name and mode.
     if config_path is None:
-        config_path = f'config/{model}/{args.mode}.yaml'
+        config_path = f'notebooks/config/{model}/{args.mode}.yaml'
     
     # Print the config file currently in use.
     print(f"<load config>")
@@ -215,33 +215,6 @@ def calculate_grad(pressure_lr, IMU_lr, window_length=9, polyorder=3):
 
     return pressure_features, IMU_features
     
-
-# # Original PressureSkeletonDataset
-# # Disabled for debugging work
-# class PressureSkeletonDataset(Dataset):
-#     """PyTorch custom dataset for pressure and skeleton data.
-#     Args:
-#         pressure_data (pd): Pressure-data sequence.
-#         skeleton_data (pd): Skeleton-data sequence.
-
-#     Returns:
-#         pressure_data (torch.Tensor): Pressure data converted to Tensor.
-#         skeleton_data (torch.Tensor): Skeleton data converted to Tensor.
-#     """
-#     def __init__(self, input_feature, skeleton_data, sequence_length):
-#         self.sequence_length = sequence_length
-#         self.input_data = input_feature
-#         self.skeleton_data = skeleton_data
-        
-#     def __len__(self):
-#         return len(self.input_data) - self.sequence_length + 1
-    
-#     def __getitem__(self, index):
-#         # Slice input sequence
-#         X = self.input_data[index : index + self.sequence_length]
-#         y = self.skeleton_data[index + self.sequence_length - 1]
-
-#         return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
     
 # Debug-friendly PressureSkeletonDataset
 class PressureSkeletonDataset(Dataset):

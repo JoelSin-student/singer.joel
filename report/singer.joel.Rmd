@@ -1,0 +1,71 @@
+---
+title: "Python, R and Git for data analysis project"
+subtitle: "First analyses on KickCap data"
+author: 
+  name: Joël Singer
+  affiliation: Master 1 IEAP - IDIL DigiMove - Faculty of Sports and Health Sciences (UFR STAPS) - University of Montpellier
+
+date: "For the academic year 2025-2026, project defense the 2026-03-24"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    highlight: tango
+    code_folding: hide
+    fig_caption: true
+
+bibliography: references.bib
+link-citations: true
+
+lang: en
+
+runtime: shiny
+---
+Supervised by **Pr Pierre Slangen** (EuroMov Digital Health in Motion, Université de Montpellier, IMT Mines Alès, France) and **Pr Emerson Franchini** (Martial Arts and Combat Sports Research Group, School of Physical Education and Sport, University of São Paulo, Brazil)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+# Introduction
+
+## Background
+The recent technological advancements in wearable sensors allow for researchers and professionals to record more and more ecologically the performance of patients or athletes. The team sports like football or rugby already included this kind of measurements in daily training from a long time ago. The reason is that the performance in those sports are in major part described by the locomotion, which is easy to track with single sensors. However, other sports have more intricate patterns, aims and rules that prevent easy measurement of performance. Combat sports are such: the performance is defined by simple rules (hit and not being hit, make the opponent unable to fight, make the back of the opponent touch the ground, ...) but that make the fine recording of movement more important than generalizations like locomotion. In striking combat sports, Kickboxing did not receive much attention in motion capture, and no current data set is available about the complete motion of athletes in ecological settings (training or competition situations). Indeed, it requires 
+
+## The KickCap data collection
+
+## Present repository aim
+
+
+
+# Methods
+
+## Repository structure
+
+## Preprocessing
+
+## Model architecture
+
+## Statistical analyses
+
+
+
+# Results
+
+## Global
+
+## Per body part
+
+## Per individual
+
+## Per situation
+
+
+
+# Implication
+
+

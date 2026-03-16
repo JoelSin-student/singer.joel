@@ -11,3 +11,260 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
+This notebook will perform all statistical analyses on the prediction of the transformer model we trained with Python and tested with selected parts of our data. After the prediction process, we obtain a file in which joints' positions are derived from pressure patterns and 6-DoF IMU information at the insole level. In parallel, we have the ground-truth file of these positions, so the statistical analyses will essentially compare the prediction to the ground-truth. 
+
+```{r}
+# -----------------------------
+# Load datasets
+# -----------------------------
+
+ground_truth_pattern <- "^Awinda_.*\\.csv$"
+prediction_pattern <- "^Predicted_skeleton_.*\\.csv$"
+
+ground_truth_files <- sort(list.files(
+  path = "data/test_data/skeleton/",
+  pattern = ground_truth_pattern,
+  full.names = TRUE
+))
+
+prediction_files <- sort(list.files(
+  path = "results/output/",
+  pattern = prediction_pattern,
+  full.names = TRUE
+))
+
+ground_truth_data_list <- lapply(ground_truth_files, read.csv)
+prediction_data_list <- lapply(prediction_files, read.csv)
+
+
+# -----------------------------
+# Function: evaluate one dataset
+# -----------------------------
+
+evaluate_dataset <- function(gt_df, pred_df) {
+
+  # Align frames
+  merged <- inner_join(gt_df, pred_df, by = "Frame", suffix = c("_gt", "_pred"))
+
+  if (nrow(merged) == 0) {
+    stop("No matching frames between prediction and ground-truth.")
+  }
+
+  # Extract coordinate matrices
+  gt_cols <- grep("_gt$", names(merged))
+  pred_cols <- grep("_pred$", names(merged))
+
+  gt <- as.matrix(merged[, gt_cols])
+  pred <- as.matrix(merged[, pred_cols])
+
+  diff <- gt - pred
+
+  n_frames <- nrow(diff)
+  n_joints <- ncol(diff) / 3
+
+  diff_array <- array(diff, dim = c(n_frames, 3, n_joints))
+
+  # Euclidean joint error
+  joint_errors <- sqrt(apply(diff_array^2, c(1,3), sum))
+
+  # MPJPE per frame
+  mpjpe_per_frame <- rowMeans(joint_errors)
+
+  # MPJPE per dataset
+  mpjpe_dataset <- mean(mpjpe_per_frame)
+
+  # Joint MAE
+  joint_mae <- colMeans(joint_errors)
+
+  list(
+    frames = merged$Frame,
+    mpjpe_per_frame = mpjpe_per_frame,
+    mpjpe_dataset = mpjpe_dataset,
+    joint_mae = joint_mae
+  )
+}
+
+
+# -----------------------------
+# Run evaluation on all datasets
+# -----------------------------
+
+mpjpe_per_dataset <- data.frame()
+mpjpe_per_frame <- data.frame()
+joint_mae_results <- data.frame()
+
+for (i in seq_along(ground_truth_data_list)) {
+
+  result <- evaluate_dataset(
+    ground_truth_data_list[[i]],
+    prediction_data_list[[i]]
+  )
+
+  dataset_name <- paste("Dataset", i)
+
+  # Dataset MPJPE
+  mpjpe_per_dataset <- rbind(
+    mpjpe_per_dataset,
+    data.frame(
+      Dataset = dataset_name,
+      MPJPE = result$mpjpe_dataset
+    )
+  )
+
+  # Frame MPJPE
+  mpjpe_per_frame <- rbind(
+    mpjpe_per_frame,
+    data.frame(
+      Dataset = dataset_name,
+      Frame = result$frames,
+      MPJPE = result$mpjpe_per_frame
+    )
+  )
+
+  # Joint MAE
+  joint_mae_results <- rbind(
+    joint_mae_results,
+    data.frame(
+      Dataset = dataset_name,
+      Joint = paste0("Joint_", seq_along(result$joint_mae)-1),
+      MAE = result$joint_mae
+    )
+  )
+}
+
+
+# -----------------------------
+# Results
+# -----------------------------
+
+print("MPJPE per dataset:")
+print(mpjpe_per_dataset)
+
+print("MPJPE per frame:")
+head(mpjpe_per_frame)
+
+print("Joint MAE:")
+print(joint_mae_results)
+```
+
+```{r}
+gt <- ground_truth_data_list[[1]]
+pred <- prediction_data_list[[1]]
+
+merged <- inner_join(gt, pred, by = "Frame", suffix = c("_gt", "_pred"))
+
+joint_col <- 2
+
+lines(
+  merged$Frame,
+  merged[[joint_col + ncol(gt) - 1]],
+  col = "red"
+)
+
+legend(
+  "topright",
+  legend = c("Ground Truth", "Prediction"),
+  col = c("black", "red"),
+  lty = 1
+)
+
+joint_start <- 2
+
+error <- sqrt(
+  (merged[[joint_start]] - merged[[joint_start + ncol(gt) - 1]])^2 +
+  (merged[[joint_start + 1]] - merged[[joint_start + ncol(gt)]])^2 +
+  (merged[[joint_start + 2]] - merged[[joint_start + ncol(gt) + 1]])^2
+)
+
+
+plot(
+  mpjpe_per_frame$Frame,
+  mpjpe_per_frame$MPJPE,
+  type = "l",
+  xlab = "Frame",
+  ylab = "MPJPE",
+  main = "MPJPE over time"
+)
+```
+
+```{r }
+joint_mae_results$MAE_cm <- joint_mae_results$MAE * 100
+
+# To have the joint names in the numeric order and not the alphabetical order
+joint_names <- paste0("Joint_", seq_along(unique(joint_mae_results$Joint))-1)
+
+joint_mae_results$Joint <- factor(
+  joint_mae_results$Joint,
+  levels = joint_names
+)
+
+ggplot(joint_mae_results, aes(x = Joint, y = Dataset, fill = MAE_cm)) +
+  geom_tile() +
+  scale_fill_gradient(
+    low = "blue",
+    high = "red",
+    name = "MAE (cm)"
+  ) +
+  labs(
+    title = "Per-Joint Mean Absolute Error",
+    x = "Joint",
+    y = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# True joint names refering to each digit
+joint_names <- c(
+  "Pelvis",
+  "L5-S1",
+  "L4-L3",
+  "L1-T12",
+  "T9-T8",
+  "T1-C7",
+  "C1-Head",
+  "R_C7-Shoulder",
+  "R_Shoulder",
+  "R_Elbow",
+  "R_Wrist",
+  "L_C7-Shoulder",
+  "L_Shoulder",
+  "L_Elbow",
+  "L_Wrist",
+  "R_Hip",
+  "R_Knee",
+  "R_Ankle",
+  "R_Ballfoot",
+  "L_Hip",
+  "L_Knee",
+  "L_Ankle",
+  "L_Ballfoot"
+)
+
+joint_mae_results$Joint <- factor(
+  joint_mae_results$Joint,
+  levels = paste0("Joint_", seq_along(joint_names)-1),
+  labels = joint_names
+)
+
+```
+
+```{r}
+ggplot(joint_mae_results, aes(x = Joint, y = Dataset, fill = MAE_cm)) +
+  geom_tile() +
+  scale_fill_gradient(
+    low = "blue",
+    high = "red",
+    name = "MAE (cm)"
+  ) +
+  labs(
+    title = "Per-Joint Mean Absolute Error",
+    x = "Joint",
+    y = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+All of this was with the Dummy prediction dataset that predicts for each frame always the same skeleton, i. e. the skeleton is static.

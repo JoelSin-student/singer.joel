@@ -5,31 +5,27 @@
 #
 import argparse
 import pandas as pd
-import io
-import sys
+from pathlib import Path
 import plotly.graph_objects as go
-from notebooks.loader import load_config
 
-def start(args):
-
-    # Load YAML config
-    # config = load_config(args, args.config, args.model)
+def start():
 
     # set real and pred skeleton data path
-    file_path_real = "./data/test_data/Skeleton/T005S008_skeleton.csv"
-    file_path_predict = "./output/predicted_skeleton.csv"
+    directory_real = Path("./data/test_data/skeleton")
+    file_path_real = next(directory_real.glob("Awinda_*.csv"))
+    file_path_predict = "./results/output/predicted_skeleton.csv"
 
     # Same settings block
     start_frame = 0
     # end_frame = min(len(frames_data_real), len(frames_data_pred))
-    step = 30
+    step = 3
 
     # skeleton definition (based on MVN User Manual 2025)
     bones = [
-        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),                     # Spine from Pelvis to Head
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),                           # Spine from Pelvis to Head
         (4, 7), (4, 11), (7, 8), (8, 9), (9, 10), (11, 12), (12, 13), (13, 14),   # (right and left) Scapula, Clavicules, Arms, Forearms
-        (0, 15), (0, 19), (15, 19),                                                 # Pelvis (trick to connect rigidly connect the two sides and the lower spine)
-        (15, 16), (16, 17), (17, 18), (19, 20), (20, 21), (21, 22)                  # (right and left) Thighs, Legs, Feet
+        (0, 15), (0, 19), (15, 19),                                               # Pelvis (trick to connect rigidly connect the two sides and the lower spine)
+        (15, 16), (16, 17), (17, 18), (19, 20), (20, 21), (21, 22)                # (right and left) Thighs, Legs, Feet
     ]
 
     # Normalize/align skeleton coordinate columns
@@ -37,7 +33,7 @@ def start(args):
         frames_data = []
         num_joints = len(df.columns) // 3
 
-        for index, row in df.iterrows():
+        for row in df.iterrows():
             x_positions, y_positions, z_positions = [], [], []
 
             for i in range(num_joints):
@@ -207,7 +203,7 @@ def start(args):
 
         # Render animation and export to HTML
         html_str = fig.to_html(full_html=True, include_plotlyjs='cdn')
-        with open("./animation/animation.html", "w", encoding="utf-8") as f:
+        with open("./results/animation/animation.html", "w", encoding="utf-8") as f:
             f.write(html_str)
 
         print(f"num frames: {len(frames)}")
@@ -223,9 +219,5 @@ def get_parser(add_help=False):
 
     parser.add_argument('-w', '--work_dir', default='', help='the work folder for storing results')
     parser.add_argument('-c', '--config', default=None, help='path to the configuration file')
-
-    # Processor
-    # feeder
-    # model
 
     return parser
