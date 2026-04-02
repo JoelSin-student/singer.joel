@@ -1,28 +1,20 @@
-1. Techniques dans le vide :
-  - Awinda : Joel-001.xlsx
-  - semelles : jsing112-01.txt
-  - sEMG : EMG_IMU_Delsys_1_technique_vide.csv
+- raw_data:
+	- Awinda: MVN export files in xlsx format
+	- Insoles: OpenGo export text files in tab-separated format
 
+- clean_data:
+	all preprocessed data: .txt being the insoles' (effectively in csv after preprocessing), .csv being the Awinda's
 
-2. Techniques sur paos :
-  - Awinda : Joel-002.xlsx
-  - semelles : jsing112-02.txt
-  - sEMG : EMG_IMU_Delsys_2_technique_paos.csv
+- training_data:
+	data that serves as training model (~80% of clean_data)
+	- Awinda: MVN preprocessed csv files
+	- Insoles: OpenGo preprocessed text files in csv format
 
+- test_data:
+	data that serves as testing model prediction after training (~20% of clean_data)
+	- Awinda: MVN preprocessed csv files
+		- Other testing files: we can only predict one file at a time. In this folder are the other testing files
+	- Insoles: OpenGo preprocessed text files in csv format
+		- Other testing files: we can only predict one file at a time. In this folder are the other testing files
 
-3. Shadow-boxing :
-  - Awinda : Joel-003.xlsx
-  - semelles : jsing112-03.txt
-  - sEMG : EMG_IMU_Delsys_3_Shadow.csv
-
-
-4. Leçon aux paos :
-  - Awinda : Joel-004.xlsx
-  - semelles : jsing112-04.txt
-  - sEMG : EMG_IMU_Delsys_4_Lecon_paos.csv
-
-
-5. Sparring light :
-  - Awinda : Joel-005.xlsx
-  - semelles : jsing112-05.txt
-  - sEMG : EMG_IMU_Delsys_5_Sparring.csv
+- subject_anthropo.txt: anthropometric information of individualized Awinda model

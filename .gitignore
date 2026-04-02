@@ -1,0 +1,10 @@
+# Ignore all data files
+*.csv
+*.xlsx
+*.txt
+
+# Ignore model files (it's heavy)
+*.pth
+
+# Except
+!readme.txt

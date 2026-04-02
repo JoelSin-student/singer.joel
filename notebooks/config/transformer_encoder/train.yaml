@@ -1,0 +1,58 @@
+mode: train
+
+location:
+  data_path: "data/training_data"
+  awinda_targets_dir: "data/clean_data/Awinda_targets_soleformer"
+  awinda_tabs_dir: "data/raw_data/Awinda/extracted_tabs/required_tabs"
+  config_path: "notebooks/config/transformer_encoder/train.yaml"
+
+train:
+  model_mode: soleformer  # original | simple_seq2seq | soleformer
+
+  # Model
+  d_model: 512
+  n_head: 8
+  num_encoder_layer: 8
+  dropout: 0.1
+
+  # Training
+  epoch: 100  # Increase for better performance (higher cost/time)
+  batch_size: 64
+
+  # Optimization
+  learning_rate: 0.0005
+  weight_decay: 0.001
+
+  # Preprocessing
+  sequence_len: 32  # Must match prediction sequence_len
+  smoothing_sigma: 0.0
+  use_time_feature: false  # Add normalized insole time as one extra input channel
+  use_gradient_data: false
+  grad_window_length: 5  # Savitzky-Golay window length for derivatives
+  grad_polyorder: 2  # Savitzky-Golay polynomial order
+  grad_smooth_grad1: false  # Smooth first derivative before second derivative
+
+  # Cycle-consistency ablations (SoleFormer only)
+  use_cycle_loss: false
+  enable_imu_cycle_loss: true
+  enable_pressure_cycle_loss: true
+  pose_loss_weight_2d: 1.0
+  pose_loss_weight_3d: 1.0
+  imu_cycle_loss_weight: 0.5
+  pressure_cycle_loss_weight: 0.5
+  freeze_pretrained_cycle_nets: true
+  accelnet_pretrained_path: null  # Optional: path to pre-trained AccelNet checkpoint
+  pressnet_pretrained_path: null  # Optional: path to pre-trained PressNet checkpoint
+
+  # Auxiliary net pretraining (for AccelNet and PressNet if enabled)
+  pretrain_accelnet: false  # Pretrain AccelNet (pose → IMU) on pose→IMU task
+  pretrain_pressnet: false  # Pretrain PressNet (pose → pressure) on pose→pressure task
+  pretrain_epochs: 30  # Number of epochs for auxiliary net pretraining
+  pretrain_learning_rate: 0.001  # Learning rate for auxiliary net pretraining
+
+  # SoleFormer targets (used only when model_mode=soleformer)
+  include_target_positions: true
+  include_target_joint_angles: true
+  joint_angles_tab_suffix: "Joint_Angles_ZXY"
+
+
