@@ -32,8 +32,8 @@ train:
   grad_polyorder: 2  # Savitzky-Golay polynomial order
   grad_smooth_grad1: false  # Smooth first derivative before second derivative
 
-  # Cycle-consistency ablations (SoleFormer only)
-  use_cycle_loss: false
+  # Full SoleFormer default (paper-style: cycle losses enabled, auxiliaries pretrained then frozen)
+  use_cycle_loss: true
   enable_imu_cycle_loss: true
   enable_pressure_cycle_loss: true
   pose_loss_weight_2d: 1.0
@@ -45,8 +45,8 @@ train:
   pressnet_pretrained_path: null  # Optional: path to pre-trained PressNet checkpoint
 
   # Auxiliary net pretraining (for AccelNet and PressNet if enabled)
-  pretrain_accelnet: false  # Pretrain AccelNet (pose → IMU) on pose→IMU task
-  pretrain_pressnet: false  # Pretrain PressNet (pose → pressure) on pose→pressure task
+  pretrain_accelnet: true  # Pretrain AccelNet (pose → IMU) on pose→IMU task
+  pretrain_pressnet: true  # Pretrain PressNet (pose → pressure) on pose→pressure task
   pretrain_epochs: 30  # Number of epochs for auxiliary net pretraining
   pretrain_learning_rate: 0.001  # Learning rate for auxiliary net pretraining
 

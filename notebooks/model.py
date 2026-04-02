@@ -449,18 +449,28 @@ class DoubleCycleConsistencyLoss(nn.Module):
         if self.enable_imu_cycle:
             pred_imu = self.accel_net(pred_pose)
             if pred_imu.shape != input_imu.shape:
-                raise ValueError(
-                    f"AccelNet output shape {tuple(pred_imu.shape)} does not match input IMU shape {tuple(input_imu.shape)}"
-                )
+                shared_t = min(pred_imu.shape[1], input_imu.shape[1])
+                shared_c = min(pred_imu.shape[2], input_imu.shape[2])
+                if shared_t <= 0 or shared_c <= 0:
+                    raise ValueError(
+                        f"AccelNet output shape {tuple(pred_imu.shape)} does not match input IMU shape {tuple(input_imu.shape)}"
+                    )
+                pred_imu = pred_imu[:, :shared_t, :shared_c]
+                input_imu = input_imu[:, :shared_t, :shared_c]
             imu_cycle_loss = F.mse_loss(pred_imu, input_imu)
 
         pressure_cycle_loss = pred_pose.new_tensor(0.0)
         if self.enable_pressure_cycle:
             pred_pressure = self.press_net(pred_pose)
             if pred_pressure.shape != input_pressure.shape:
-                raise ValueError(
-                    f"PressNet output shape {tuple(pred_pressure.shape)} does not match input pressure shape {tuple(input_pressure.shape)}"
-                )
+                shared_t = min(pred_pressure.shape[1], input_pressure.shape[1])
+                shared_c = min(pred_pressure.shape[2], input_pressure.shape[2])
+                if shared_t <= 0 or shared_c <= 0:
+                    raise ValueError(
+                        f"PressNet output shape {tuple(pred_pressure.shape)} does not match input pressure shape {tuple(input_pressure.shape)}"
+                    )
+                pred_pressure = pred_pressure[:, :shared_t, :shared_c]
+                input_pressure = input_pressure[:, :shared_t, :shared_c]
             pressure_cycle_loss = F.mse_loss(pred_pressure, input_pressure)
 
         total_loss = self.weight_pose * pose_loss
@@ -761,11 +771,12 @@ def pretrain_accelnet(
         Flattens skeleton (batch, seq_len, pose_dim) as input to AccelNet.
     """
     optimizer = torch.optim.Adam(accelnet.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, verbose=False)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     criterion = nn.MSELoss()
     
     accelnet.to(device)
     best_val_loss = float("inf")
+    _printed_dim_warning = False
     
     start_time = time.time()
     pre_time = start_time
@@ -783,16 +794,33 @@ def pretrain_accelnet(
             
             # Extract IMU from pressure concatenation
             # Assume: pressure_batch = [pressure_channels | imu_dim | possibly_more]
-            # You may need to adjust imu_start/imu_end based on your data format
-            imu_start = getattr(accelnet, "_imu_start", pressure.shape[2] - 6)
-            imu_end = imu_start + 6
-            target_imu = pressure[:, :, imu_start:imu_end]  # (batch, seq_len, 6)
+            imu_dim = int(getattr(accelnet, "_imu_dim", accelnet.network[-1].out_features))
+            pressure_dim = int(getattr(accelnet, "_pressure_dim", pressure.shape[2] - imu_dim))
+            imu_start = int(getattr(accelnet, "_imu_start", pressure_dim))
+            imu_end = imu_start + imu_dim
+            target_imu = pressure[:, :, imu_start:imu_end]  # (batch, seq_len, imu_dim)
             
             # Flatten skeleton as input: (batch, seq_len, pose_dim) → (batch, seq_len, pose_dim)
             input_pose = skeleton  # skeleton is already (batch, seq_len, pose_dim)
             
             optimizer.zero_grad()
-            pred_imu = accelnet(input_pose)  # (batch, seq_len, 6)
+            pred_imu = accelnet(input_pose)  # (batch, seq_len, imu_dim)
+            if pred_imu.shape[-1] != target_imu.shape[-1]:
+                shared_dim = int(min(pred_imu.shape[-1], target_imu.shape[-1]))
+                if shared_dim <= 0:
+                    raise ValueError(
+                        f"Invalid IMU dimensions for pretraining: pred={tuple(pred_imu.shape)}, "
+                        f"target={tuple(target_imu.shape)}"
+                    )
+                if not _printed_dim_warning:
+                    print(
+                        "[AccelNet pretrain] Channel mismatch detected; "
+                        f"aligning from pred={pred_imu.shape[-1]} and target={target_imu.shape[-1]} "
+                        f"to shared_dim={shared_dim}."
+                    )
+                    _printed_dim_warning = True
+                pred_imu = pred_imu[..., :shared_dim]
+                target_imu = target_imu[..., :shared_dim]
             loss = criterion(pred_imu, target_imu)
             loss.backward()
             optimizer.step()
@@ -810,10 +838,23 @@ def pretrain_accelnet(
                 pressure = pressure.to(device)
                 skeleton = skeleton.to(device)
                 
+                imu_dim = int(getattr(accelnet, "_imu_dim", accelnet.network[-1].out_features))
+                pressure_dim = int(getattr(accelnet, "_pressure_dim", pressure.shape[2] - imu_dim))
+                imu_start = int(getattr(accelnet, "_imu_start", pressure_dim))
+                imu_end = imu_start + imu_dim
                 target_imu = pressure[:, :, imu_start:imu_end]
                 input_pose = skeleton
                 
                 pred_imu = accelnet(input_pose)
+                if pred_imu.shape[-1] != target_imu.shape[-1]:
+                    shared_dim = int(min(pred_imu.shape[-1], target_imu.shape[-1]))
+                    if shared_dim <= 0:
+                        raise ValueError(
+                            f"Invalid IMU dimensions for validation: pred={tuple(pred_imu.shape)}, "
+                            f"target={tuple(target_imu.shape)}"
+                        )
+                    pred_imu = pred_imu[..., :shared_dim]
+                    target_imu = target_imu[..., :shared_dim]
                 loss = criterion(pred_imu, target_imu)
                 val_loss += float(loss.item())
         
@@ -874,7 +915,7 @@ def pretrain_pressnet(
         Flattens skeleton (batch, seq_len, pose_dim) as input to PressNet.
     """
     optimizer = torch.optim.Adam(pressnet.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, verbose=False)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     criterion = nn.MSELoss()
     
     pressnet.to(device)
@@ -896,7 +937,7 @@ def pretrain_pressnet(
             
             # Extract pressure from first pressure_dim columns
             # Assume: pressure_batch = [pressure_channels | imu_dim | possibly_more]
-            pressure_dim = getattr(pressnet, "_pressure_dim", pressure.shape[2] - 6)  # Default: all but last 6 (IMU)
+            pressure_dim = int(getattr(pressnet, "_pressure_dim", pressnet.fc3.out_features))
             target_pressure = pressure[:, :, :pressure_dim]  # (batch, seq_len, pressure_dim)
             
             # Flatten skeleton as input
@@ -921,6 +962,7 @@ def pretrain_pressnet(
                 pressure = pressure.to(device)
                 skeleton = skeleton.to(device)
                 
+                pressure_dim = int(getattr(pressnet, "_pressure_dim", pressnet.fc3.out_features))
                 target_pressure = pressure[:, :, :pressure_dim]
                 input_pose = skeleton
                 

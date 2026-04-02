@@ -357,11 +357,15 @@ def start(args):
             output_dim=int(train_imu_scaled.shape[1]),
             dropout=parameters["dropout"],
         ).to(device)
+        accel_net._pressure_dim = int(train_pressure_scaled.shape[1])
+        accel_net._imu_dim = int(train_imu_scaled.shape[1])
+        accel_net._imu_start = int(train_pressure_scaled.shape[1])
         press_net = PressNet(
             input_dim=parameters["output_dim"],
             output_dim=int(train_pressure_scaled.shape[1]),
             dropout=parameters["dropout"],
         ).to(device)
+        press_net._pressure_dim = int(train_pressure_scaled.shape[1])
 
         # Optional: Pretrain auxiliaries if enabled and no checkpoint provided
         if pretrain_accelnet_enabled and not accelnet_pretrained_path:
