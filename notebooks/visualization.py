@@ -74,12 +74,6 @@ def _process_skeleton_data(df):
     return frames_data
 
 
-def _joint_xyz(frame, idx):
-    if idx >= len(frame['x']):
-        return [], [], []
-    return [frame['x'][idx]], [frame['z'][idx]], [frame['y'][idx]]
-
-
 def _all_bones_xyz(frame, bones):
     xs, ys, zs = [], [], []
     for start, end in bones:
@@ -90,13 +84,7 @@ def _all_bones_xyz(frame, bones):
     return xs, ys, zs
 
 
-def _bone_xyz(frame, start, end):
-    if start >= len(frame['x']) or end >= len(frame['x']):
-        return [], [], []
-    return [frame['x'][start], frame['x'][end]], [frame['z'][start], frame['z'][end]], [frame['y'][start], frame['y'][end]]
-
-
-def _create_frame_traces(frame_real, frame_pred, bones, joint_indices, showlegend=False):
+def _create_frame_traces(frame_real, frame_pred, bones, showlegend=False):
     traces = []
 
     traces.append(
@@ -146,64 +134,6 @@ def _create_frame_traces(frame_real, frame_pred, bones, joint_indices, showlegen
             showlegend=showlegend,
         )
     )
-
-    for joint_idx in joint_indices:
-        real_x, real_y, real_z = _joint_xyz(frame_real, joint_idx)
-        traces.append(
-            go.Scatter3d(
-                x=real_x,
-                y=real_y,
-                z=real_z,
-                mode='markers',
-                marker=dict(size=6, color='red', opacity=0.9),
-                name=f'Real Joint {joint_idx}',
-                visible='legendonly',
-                showlegend=showlegend,
-            )
-        )
-
-        pred_x, pred_y, pred_z = _joint_xyz(frame_pred, joint_idx)
-        traces.append(
-            go.Scatter3d(
-                x=pred_x,
-                y=pred_y,
-                z=pred_z,
-                mode='markers',
-                marker=dict(size=6, color='blue', opacity=0.9),
-                name=f'Predicted Joint {joint_idx}',
-                visible='legendonly',
-                showlegend=showlegend,
-            )
-        )
-
-    for bone_idx, (start, end) in enumerate(bones):
-        real_bx, real_by, real_bz = _bone_xyz(frame_real, start, end)
-        traces.append(
-            go.Scatter3d(
-                x=real_bx,
-                y=real_by,
-                z=real_bz,
-                mode='lines',
-                line=dict(color='red', width=3),
-                name=f'Real Bone {bone_idx} ({start}-{end})',
-                visible='legendonly',
-                showlegend=showlegend,
-            )
-        )
-
-        pred_bx, pred_by, pred_bz = _bone_xyz(frame_pred, start, end)
-        traces.append(
-            go.Scatter3d(
-                x=pred_bx,
-                y=pred_by,
-                z=pred_bz,
-                mode='lines',
-                line=dict(color='blue', width=3),
-                name=f'Predicted Bone {bone_idx} ({start}-{end})',
-                visible='legendonly',
-                showlegend=showlegend,
-            )
-        )
 
     return traces
 
@@ -281,9 +211,6 @@ def _build_input_tag(*tags):
     return '__'.join(unique_tags)
 
 
-
-
-
 def start(args=None):
     config = load_config(args, args.config if args else None, args.model if args else None)
     model_mode = str(config['visual'].get('model_mode', 'simple_seq2seq')).lower()
@@ -293,13 +220,24 @@ def start(args=None):
     print(f"Using predicted skeleton file: {file_path_predict}")
 
     # CLI arguments override config values.
-    start_frame = int((args.start_frame if args and args.start_frame is not None else None) or config['visual'].get('start_frame', 0))
-    step = int((args.step if args and args.step is not None else None) or config['visual'].get('step', 3))
+    start_frame = int(
+        (args.start_frame if args and args.start_frame is not None else None)
+        or config['visual'].get('start_frame', 0)
+    )
+    step = int(
+        (args.step if args and args.step is not None else None)
+        or config['visual'].get('step', 3)
+    )
     output_dir_config = (
         (args.output_html if args and args.output_html else None)
         or config['visual'].get('output_html', None)
-        or os.path.join(".", "results", "animation")
+        or os.path.join('.', 'results', 'animation')
     )
+    play_frame_duration_ms = int(
+        (args.play_frame_duration_ms if args and args.play_frame_duration_ms is not None else None)
+        or config['visual'].get('play_frame_duration_ms', config['visual'].get('play_duration_ms', 50))
+    )
+    play_frame_duration_ms = max(0, play_frame_duration_ms)
     
     real_tag = _extract_tag_from_real_file(file_path_real)
     pred_tag = _extract_tag_from_pred_file(file_path_predict, model_mode)
@@ -329,48 +267,60 @@ def start(args=None):
     end_frame = min(len(frames_data_real), len(frames_data_pred))
     frames_data_real = frames_data_real[start_frame:end_frame:step]
     frames_data_pred = frames_data_pred[start_frame:end_frame:step]
+
     if not frames_data_real or not frames_data_pred:
         raise ValueError('No visualization frames available after slicing. Check start_frame/step settings.')
-
-    max_joint_count = max(
-        max((len(frame['x']) for frame in frames_data_real), default=0),
-        max((len(frame['x']) for frame in frames_data_pred), default=0),
-    )
-    joint_indices = list(range(max_joint_count))
 
     fig = go.Figure()
     initial_traces = _create_frame_traces(
         frames_data_real[0],
         frames_data_pred[0],
         bones,
-        joint_indices,
         showlegend=True,
     )
     for trace in initial_traces:
         fig.add_trace(trace)
 
     frames = [
-        go.Frame(data=_create_frame_traces(real, pred, bones, joint_indices, showlegend=False), name=f'frame{i}')
+        go.Frame(
+            data=_create_frame_traces(
+                real,
+                pred,
+                bones,
+                showlegend=True,
+            ),
+            name=f'frame{i}',
+        )
         for i, (real, pred) in enumerate(zip(frames_data_real, frames_data_pred))
     ]
     fig.frames = frames
 
     fig.update_layout(
         title='3D Skeleton Animation: Real (Red) vs Prediction (Blue)',
-        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'),
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            aspectmode='data',
+            domain=dict(x=[0.0, 0.72], y=[0.0, 1.0]),
+        ),
         width=1000,
         height=1000,
         showlegend=True,
         legend=dict(
-            x=1.02,
+            x=0.74,
             y=1.0,
             yanchor='top',
             xanchor='left',
             itemsizing='constant',
+            bgcolor='rgba(255,255,255,0.3)',
+            borderwidth=0,
+            font=dict(size=10),
         ),
+        margin=dict(l=10, r=10, t=60, b=10),
         updatemenus=[{
             'buttons': [
-                {'args': [None, {'frame': {'duration': 50, 'redraw': True}, 'fromcurrent': True}], 'label': 'Play', 'method': 'animate'},
+                {'args': [None, {'frame': {'duration': play_frame_duration_ms, 'redraw': True}, 'fromcurrent': True}], 'label': 'Play', 'method': 'animate'},
                 {'args': [[None], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}], 'label': 'Pause', 'method': 'animate'},
             ],
             'direction': 'left',
@@ -410,11 +360,78 @@ def start(args=None):
     
     output_file = output_dir / f'Animation_{input_tag}_{model_mode}.html'
     os.makedirs(output_dir, exist_ok=True)
-    html_str = fig.to_html(full_html=True, include_plotlyjs='cdn')
+    default_fps = max(1, int(round(1000.0 / max(1, play_frame_duration_ms))))
+    post_script = f"""
+var gd = document.getElementById('{{plot_id}}');
+if (gd) {{
+    var currentFps = {default_fps};
+
+    function setPlayDurationFromFps(fps) {{
+        var clampedFps = Math.max(1, Math.min(240, fps));
+        currentFps = clampedFps;
+        var duration = Math.max(0, Math.round(1000 / clampedFps));
+        if (gd.layout && gd.layout.updatemenus && gd.layout.updatemenus[0] && gd.layout.updatemenus[0].buttons && gd.layout.updatemenus[0].buttons[0]) {{
+            gd.layout.updatemenus[0].buttons[0].args[1].frame.duration = duration;
+        }}
+        if (gd._fullLayout && gd._fullLayout.updatemenus && gd._fullLayout.updatemenus[0] && gd._fullLayout.updatemenus[0].buttons && gd._fullLayout.updatemenus[0].buttons[0]) {{
+            gd._fullLayout.updatemenus[0].buttons[0].args[1].frame.duration = duration;
+        }}
+        Plotly.relayout(gd, {{
+            'updatemenus[0].buttons[0].args[1].frame.duration': duration
+        }});
+    }}
+
+    setPlayDurationFromFps(currentFps);
+
+    var panel = document.createElement('div');
+    panel.style.position = 'absolute';
+    panel.style.right = '12px';
+    panel.style.bottom = '20px';
+    panel.style.width = '260px';
+    panel.style.padding = '10px 12px';
+    panel.style.background = 'rgba(255,255,255,0.9)';
+    panel.style.border = '1px solid rgba(0,0,0,0.2)';
+    panel.style.borderRadius = '8px';
+    panel.style.fontFamily = 'Segoe UI, sans-serif';
+    panel.style.fontSize = '12px';
+    panel.style.zIndex = '50';
+    panel.innerHTML = '' +
+        '<div style="font-weight:600;margin-bottom:8px;">Playback Speed</div>' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">' +
+        '<span>FPS</span><span id="fps-value">' + currentFps + '</span>' +
+        '</div>' +
+        '<input id="fps-slider" type="range" min="1" max="120" step="1" value="' + currentFps + '" style="width:100%;">';
+
+    var parent = gd.parentNode;
+    if (parent) {{
+        parent.style.position = 'relative';
+        parent.appendChild(panel);
+        var slider = panel.querySelector('#fps-slider');
+        var label = panel.querySelector('#fps-value');
+        if (slider && label) {{
+            slider.addEventListener('input', function() {{
+                var fps = parseInt(slider.value, 10);
+                if (!isNaN(fps)) {{
+                    label.textContent = String(fps);
+                    setPlayDurationFromFps(fps);
+                }}
+            }});
+        }}
+    }}
+}}
+"""
+    html_str = fig.to_html(
+        full_html=True,
+        include_plotlyjs='cdn',
+        div_id='skeleton_animation_fig',
+        post_script=post_script,
+    )
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html_str)
 
     print(f"num frames: {len(frames)}")
+    print(f"Play frame duration (ms): {play_frame_duration_ms}")
+    print(f"Default FPS: {default_fps}")
     print(f"Visualization successful. Saved to: {output_file}")
 
 
@@ -430,5 +447,6 @@ def get_parser(add_help=False):
     parser.add_argument('--start_frame', type=int, default=None)
     parser.add_argument('--step', type=int, default=None)
     parser.add_argument('--output_html', type=str, default=None)
+    parser.add_argument('--play_frame_duration_ms', type=int, default=None, help='Animation speed in ms per frame for the Play button (lower=faster).')
 
     return parser
