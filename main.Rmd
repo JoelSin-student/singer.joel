@@ -11,3 +11,47 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
+Learning curves for small (1% of dataset) training set, from one situation of one participant.
+
+```{r}
+# Load data
+training_p2p <- read_csv("results/learning_results/Learning_results_original.csv")
+
+training_seq2seq <- read_csv("results/learning_results/Learning_results_simple_seq2seq.csv")
+
+training_soleformer <- read_csv("results/learning_results/Learning_results_soleformer.csv")
+
+# Plot in one figure of two panels the training loss and validation loss
+lc_p2p <- training_p2p |> 
+  ggplot(aes(x = epoch)) +
+  geom_line(aes(y = train_loss, color = "train_loss")) +
+  geom_line(aes(y = val_loss, color = "val_loss")) +
+  labs(title = "P2P", x = "Epoch", y = "Loss") +
+  scale_color_manual(values = c("train_loss" = "blue", "val_loss" = "red")) +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+lc_seq2seq <- training_seq2seq |>
+  ggplot(aes(x = epoch)) +
+  geom_line(aes(y = train_loss, color = "train_loss")) +
+  geom_line(aes(y = val_loss, color = "val_loss")) +
+  labs(title = "Seq2Seq", x = "Epoch", y = "Loss") +
+  scale_color_manual(values = c("train_loss" = "blue", "val_loss" = "red")) +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+lc_soleformer <- training_soleformer |>
+  ggplot(aes(x = epoch)) +
+  geom_line(aes(y = train_loss, color = "train_loss")) +
+  geom_line(aes(y = val_loss, color = "val_loss")) +
+  labs(title = "SoleFormer", x = "Epoch", y = "Loss") +
+  scale_color_manual(values = c("train_loss" = "blue", "val_loss" = "red")) +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+lc_p2p
+lc_seq2seq
+lc_soleformer
+
+```
+

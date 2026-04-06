@@ -577,7 +577,7 @@ def train_mse(
     pre_time = start_time
     elaps_time_total_s = 0.0
     now_time = datetime.datetime.now()
-    print(f"\n[train started at {now_time.strftime('%H:%M')}]")
+    print(f"\n[train started at {now_time.strftime('%H:%M')}]", flush=True)
 
     for epoch in range(num_epochs):
         if wd_scheduler is not None:
@@ -637,7 +637,8 @@ def train_mse(
             f"LR        : {current_lr:.5f}\n"
             f"WD        : {current_wd:.6f}\n"
             f"Time/epoch: {epoch_time_m}m {epoch_time_s}s | Total: {elaps_time_m}m {elaps_time_s}s\n"
-            f"Estimated Finish: {est_finish_str}"
+            f"Estimated Finish: {est_finish_str}",
+            flush=True,
         )
 
         history.append(
@@ -662,7 +663,7 @@ def train_mse(
                 **(checkpoint_extra or {}),
             }
             torch.save(checkpoint, save_path)
-            print(f">> Model saved at epoch {epoch + 1} (val_loss={best_val_loss:.6f})")
+            print(f">> Model saved at epoch {epoch + 1} (val_loss={best_val_loss:.6f})", flush=True)
 
     return history
 
@@ -688,7 +689,7 @@ def train_mse_with_cycle(
     pre_time = start_time
     elaps_time_total_s = 0.0
     now_time = datetime.datetime.now()
-    print(f"\n[cycle train started at {now_time.strftime('%H:%M')}]")
+    print(f"\n[cycle train started at {now_time.strftime('%H:%M')}]", flush=True)
 
     for epoch in range(num_epochs):
         if wd_scheduler is not None:
@@ -791,7 +792,8 @@ def train_mse_with_cycle(
             f"LR        : {current_lr:.5f}\n"
             f"WD        : {current_wd:.6f}\n"
             f"Time/epoch: {epoch_time_m}m {epoch_time_s}s | Total: {elaps_time_m}m {elaps_time_s}s\n"
-            f"Estimated Finish: {est_finish_str}"
+            f"Estimated Finish: {est_finish_str}",
+            flush=True,
         )
 
         history.append(
@@ -826,7 +828,7 @@ def train_mse_with_cycle(
                 **(checkpoint_extra or {}),
             }
             torch.save(checkpoint, save_path)
-            print(f">> Model saved at epoch {epoch + 1} (val_total={best_val_loss:.6f})")
+            print(f">> Model saved at epoch {epoch + 1} (val_total={best_val_loss:.6f})", flush=True)
 
     return history
 
