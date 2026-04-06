@@ -23,7 +23,7 @@ Both can be:
 use_cycle_loss: true
 pretrain_accelnet: true      # Pretrain AccelNet
 pretrain_pressnet: true      # Pretrain PressNet
-pretrain_epochs: 30
+pretrain_epochs: 40
 pretrain_learning_rate: 0.001
 freeze_pretrained_cycle_nets: true  # Freeze after main training starts
 ```
@@ -38,9 +38,9 @@ python train.py \
 ```
 
 **Workflow**:
-1. AccelNet trained for 30 epochs on pose→IMU task (MSE loss)
+1. AccelNet trained for 40 epochs on pose→IMU task (MSE loss)
    - Saves: `./checkpoints/accelnet_pretrained.pt`
-2. PressNet trained for 30 epochs on pose→pressure task (MSE loss)
+2. PressNet trained for 40 epochs on pose→pressure task (MSE loss)
    - Saves: `./checkpoints/pressnet_pretrained.pt`
 3. Main SoleFormer training begins with frozen cycle nets
 4. Final checkpoint includes both accel_net and press_net state dicts
@@ -115,7 +115,7 @@ Both use:
 # 1. Read config
 pretrain_accelnet = config["train"].get("pretrain_accelnet", False)
 pretrain_pressnet = config["train"].get("pretrain_pressnet", False)
-pretrain_epochs = config["train"].get("pretrain_epochs", 30)
+pretrain_epochs = config["train"].get("pretrain_epochs", 40)
 pretrain_learning_rate = config["train"].get("pretrain_learning_rate", 0.001)
 
 # 2. Create auxiliary nets

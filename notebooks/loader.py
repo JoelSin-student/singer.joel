@@ -23,7 +23,7 @@ def load_config(args,config_path, model):
     """
     # If config_path is not provided, infer it from model name and mode.
     if config_path is None:
-        config_path = f'notebooks/config/{model}/{args.mode}.yaml'
+        config_path = os.path.join('notebooks', 'config', model, f'{args.mode}.yaml')
     
     # Print the config file currently in use.
     print(f"<load config>")
@@ -325,7 +325,12 @@ def load_awinda_targets_from_converted_tabs(
     return pd.concat(all_targets, ignore_index=True), meta
 
 
-def load_awinda_targets_from_merged_csv(data_pairs, awinda_targets_dir):
+def load_awinda_targets_from_merged_csv(
+    data_pairs,
+    awinda_targets_dir,
+    include_positions=True,
+    include_joint_angles=True,
+):
     """Load premerged Awinda target CSVs (AwindaTarget_<tag>.csv) for soleformer.
 
     Args:
@@ -335,6 +340,9 @@ def load_awinda_targets_from_merged_csv(data_pairs, awinda_targets_dir):
     Returns:
         tuple(pd.DataFrame, dict): Concatenated targets and metadata.
     """
+    if not include_positions and not include_joint_angles:
+        raise ValueError("At least one target source must be enabled for Awinda target loading.")
+
     all_targets = []
     expected_columns = None
     awinda_targets_dir = str(awinda_targets_dir)
@@ -359,6 +367,30 @@ def load_awinda_targets_from_merged_csv(data_pairs, awinda_targets_dir):
         if df.shape[1] == 0:
             raise ValueError(f"No usable numeric target columns found in {target_path}")
 
+        # Filter merged targets according to requested source types.
+        position_columns = [c for c in df.columns if c.startswith('pos::')]
+        angle_columns = [c for c in df.columns if c.startswith('ang::')]
+
+        # Fallback when schema does not use explicit prefixes.
+        if not position_columns and not angle_columns:
+            position_columns = list(df.columns)
+        elif not position_columns and angle_columns:
+            position_columns = [c for c in df.columns if c not in angle_columns]
+
+        selected_columns = []
+        if include_positions:
+            selected_columns.extend(position_columns)
+        if include_joint_angles:
+            selected_columns.extend(angle_columns)
+
+        if not selected_columns:
+            raise ValueError(
+                f"Merged Awinda targets for tag '{tag}' do not contain columns matching the requested "
+                f"include_positions={include_positions}, include_joint_angles={include_joint_angles}."
+            )
+
+        df = df[selected_columns]
+
         if expected_columns is None:
             expected_columns = list(df.columns)
         elif list(df.columns) != expected_columns:
@@ -372,10 +404,11 @@ def load_awinda_targets_from_merged_csv(data_pairs, awinda_targets_dir):
     if not all_targets:
         raise ValueError("No Awinda merged targets were loaded.")
 
+    first_cols = list(all_targets[0].columns)
     meta = {
-        "target_columns": list(all_targets[0].columns),
-        "position_columns": [c for c in all_targets[0].columns if c.startswith('pos::')],
-        "angle_columns": [c for c in all_targets[0].columns if c.startswith('ang::')],
+        "target_columns": first_cols,
+        "position_columns": [c for c in first_cols if c.startswith('pos::')] or first_cols,
+        "angle_columns": [c for c in first_cols if c.startswith('ang::')],
         "joint_angles_suffix": "merged_csv",
     }
 

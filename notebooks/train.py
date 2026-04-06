@@ -1,5 +1,7 @@
 # Training processor
 import argparse
+import csv
+import math
 import os
 
 import numpy as np
@@ -49,6 +51,93 @@ def _to_bool(value, default=False):
     raise ValueError(f"Cannot parse boolean value from '{value}'")
 
 
+def _mode_value(config_train, model_mode, shared_key, mode_key):
+    """Resolve mode-specific hyperparameter with fallback to shared key."""
+    if model_mode == "soleformer" and mode_key in config_train and config_train.get(mode_key) is not None:
+        return config_train[mode_key]
+    return config_train[shared_key]
+
+
+class WarmupCosineWeightDecayScheduler:
+    """Epoch-based warmup + cosine decay scheduler for optimizer weight decay."""
+
+    def __init__(self, optimizer, base_weight_decay, min_weight_decay, warmup_epochs, total_epochs):
+        self.optimizer = optimizer
+        self.base_weight_decay = float(base_weight_decay)
+        self.min_weight_decay = float(min_weight_decay)
+        self.warmup_epochs = int(max(0, warmup_epochs))
+        self.total_epochs = int(max(1, total_epochs))
+
+    def _compute(self, epoch_idx):
+        epoch_idx = int(max(0, epoch_idx))
+
+        if self.warmup_epochs > 0 and epoch_idx < self.warmup_epochs:
+            # Linear warm-up from 0 to base weight decay.
+            return self.base_weight_decay * float(epoch_idx + 1) / float(self.warmup_epochs)
+
+        if self.total_epochs <= self.warmup_epochs + 1:
+            return self.base_weight_decay
+
+        progress = float(epoch_idx - self.warmup_epochs) / float(self.total_epochs - self.warmup_epochs - 1)
+        progress = min(max(progress, 0.0), 1.0)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return self.min_weight_decay + (self.base_weight_decay - self.min_weight_decay) * cosine
+
+    def step(self, epoch_idx):
+        current_wd = float(self._compute(epoch_idx))
+        for group in self.optimizer.param_groups:
+            if group.get("apply_wd_schedule", False):
+                group["weight_decay"] = current_wd
+        return current_wd
+
+
+def _build_linear_weight_decay_param_groups(modules, weight_decay):
+    """Apply weight decay only to nn.Linear weights; all other params are no-decay."""
+    decay_params = []
+    no_decay_params = []
+    decay_param_ids = set()
+
+    for module in modules:
+        for submodule in module.modules():
+            if isinstance(submodule, torch.nn.Linear) and submodule.weight is not None and submodule.weight.requires_grad:
+                param = submodule.weight
+                param_id = id(param)
+                if param_id not in decay_param_ids:
+                    decay_params.append(param)
+                    decay_param_ids.add(param_id)
+
+    for module in modules:
+        for param in module.parameters():
+            if not param.requires_grad:
+                continue
+            if id(param) in decay_param_ids:
+                continue
+            no_decay_params.append(param)
+
+    param_groups = []
+    if decay_params:
+        param_groups.append(
+            {
+                "params": decay_params,
+                "weight_decay": float(weight_decay),
+                "apply_wd_schedule": True,
+            }
+        )
+    if no_decay_params:
+        param_groups.append(
+            {
+                "params": no_decay_params,
+                "weight_decay": 0.0,
+                "apply_wd_schedule": False,
+            }
+        )
+
+    if not param_groups:
+        raise ValueError("No trainable parameters were found for optimizer setup.")
+
+    return param_groups
+
+
 def start(args):
     config = load_config(args, args.config, args.model)
 
@@ -56,8 +145,8 @@ def start(args):
     if model_mode not in {"original", "simple_seq2seq", "soleformer"}:
         raise ValueError("train.model_mode must be one of: original, simple_seq2seq, soleformer")
 
-    skeleton_dir = config["location"]["data_path"] + "/skeleton/"
-    insole_dir = config["location"]["data_path"] + "/Insole/"
+    skeleton_dir = os.path.join(config["location"]["data_path"], "skeleton")
+    insole_dir = os.path.join(config["location"]["data_path"], "Insole")
 
     skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)
     skeleton_df, insole_df, segment_ids = load_and_combine_data(skeleton_insole_datapath_pairs)
@@ -83,6 +172,8 @@ def start(args):
             target_df, awinda_target_meta = load_awinda_targets_from_merged_csv(
                 skeleton_insole_datapath_pairs,
                 awinda_targets_dir=awinda_targets_dir,
+                include_positions=include_target_positions,
+                include_joint_angles=include_target_joint_angles,
             )
         else:
             print(f"Using converted raw Awinda tabs from: {awinda_tabs_dir}")
@@ -175,7 +266,26 @@ def start(args):
         val_time_scaled = None
 
     use_gradient_data = _to_bool(config["train"].get("use_gradient_data", False), default=False)
-    use_cycle_loss = _to_bool(config["train"].get("use_cycle_loss", False), default=False)
+    
+    # Resolve cycle loss and pretraining flags with model_mode awareness
+    if model_mode == "soleformer":
+        use_cycle_loss = _to_bool(
+            config["train"].get("soleformer_use_cycle_loss", config["train"].get("use_cycle_loss", True)),
+            default=True,
+        )
+        pretrain_accelnet_enabled = _to_bool(
+            config["train"].get("soleformer_pretrain_accelnet", config["train"].get("pretrain_accelnet", True)),
+            default=True,
+        )
+        pretrain_pressnet_enabled = _to_bool(
+            config["train"].get("soleformer_pretrain_pressnet", config["train"].get("pretrain_pressnet", True)),
+            default=True,
+        )
+    else:
+        use_cycle_loss = False  # Only soleformer supports cycle loss
+        pretrain_accelnet_enabled = False
+        pretrain_pressnet_enabled = False
+    
     enable_imu_cycle_loss = _to_bool(config["train"].get("enable_imu_cycle_loss", True), default=True)
     enable_pressure_cycle_loss = _to_bool(config["train"].get("enable_pressure_cycle_loss", True), default=True)
     freeze_pretrained_cycle_nets = _to_bool(
@@ -184,17 +294,41 @@ def start(args):
     )
     accelnet_pretrained_path = config["train"].get("accelnet_pretrained_path", None)
     pressnet_pretrained_path = config["train"].get("pressnet_pretrained_path", None)
-    pretrain_accelnet_enabled = _to_bool(config["train"].get("pretrain_accelnet", False), default=False)
-    pretrain_pressnet_enabled = _to_bool(config["train"].get("pretrain_pressnet", False), default=False)
     pretrain_epochs = int(config["train"].get("pretrain_epochs", 30))
     pretrain_learning_rate = float(config["train"].get("pretrain_learning_rate", 0.001))
     pose_loss_weight_2d = float(config["train"].get("pose_loss_weight_2d", 1.0))
     pose_loss_weight_3d = float(config["train"].get("pose_loss_weight_3d", 1.0))
     imu_cycle_loss_weight = float(config["train"].get("imu_cycle_loss_weight", 0.5))
     pressure_cycle_loss_weight = float(config["train"].get("pressure_cycle_loss_weight", 0.5))
+    if model_mode == "soleformer":
+        use_lower_leg_angles_for_accelnet = _to_bool(
+            config["train"].get("soleformer_use_lower_leg_angles_for_accelnet", False),
+            default=False,
+        )
+        use_weight_decay_schedule = _to_bool(
+            config["train"].get("soleformer_use_weight_decay_schedule", False),
+            default=False,
+        )
+    else:
+        use_lower_leg_angles_for_accelnet = _to_bool(
+            config["train"].get("use_lower_leg_angles_for_accelnet", False),
+            default=False,
+        )
+        use_weight_decay_schedule = _to_bool(
+            config["train"].get("use_weight_decay_schedule", False),
+            default=False,
+        )
+    weight_decay_warmup_epochs = int(
+        config["train"].get("soleformer_weight_decay_warmup_epochs", 5)
+        if model_mode == "soleformer"
+        else config["train"].get("weight_decay_warmup_epochs", 0)
+    )
+    min_weight_decay = float(
+        config["train"].get("soleformer_min_weight_decay", 0.0)
+        if model_mode == "soleformer"
+        else config["train"].get("min_weight_decay", 0.0)
+    )
 
-    if use_cycle_loss and model_mode != "soleformer":
-        raise ValueError("train.use_cycle_loss is supported only when train.model_mode=soleformer.")
     grad_window_length = int(config["train"].get("grad_window_length", 5))
     grad_polyorder = int(config["train"].get("grad_polyorder", 2))
     grad_smooth_grad1 = _to_bool(config["train"].get("grad_smooth_grad1", False), default=False)
@@ -240,6 +374,7 @@ def start(args):
     train_input_feature = np.concatenate(train_feature_parts, axis=1)
     val_input_feature = np.concatenate(val_feature_parts, axis=1)
 
+    train_cfg = config["train"]
     parameters = {
         "model_mode": model_mode,
         "use_gradient_data": use_gradient_data,
@@ -252,15 +387,19 @@ def start(args):
         "pose_loss_weight_3d": pose_loss_weight_3d,
         "imu_cycle_loss_weight": imu_cycle_loss_weight,
         "pressure_cycle_loss_weight": pressure_cycle_loss_weight,
-        "d_model": config["train"]["d_model"],
-        "n_head": config["train"]["n_head"],
-        "num_encoder_layer": config["train"]["num_encoder_layer"],
-        "dropout": config["train"]["dropout"],
-        "num_epoch": config["train"]["epoch"],
-        "batch_size": config["train"]["batch_size"],
-        "learning_rate": config["train"]["learning_rate"],
-        "weight_decay": config["train"]["weight_decay"],
-        "sequence_len": config["train"]["sequence_len"],
+        "use_lower_leg_angles_for_accelnet": bool(use_lower_leg_angles_for_accelnet and model_mode == "soleformer"),
+        "use_weight_decay_schedule": bool(use_weight_decay_schedule and model_mode == "soleformer"),
+        "weight_decay_warmup_epochs": weight_decay_warmup_epochs,
+        "min_weight_decay": min_weight_decay,
+        "d_model": int(_mode_value(train_cfg, model_mode, "d_model", "soleformer_d_model")),
+        "n_head": int(_mode_value(train_cfg, model_mode, "n_head", "soleformer_n_head")),
+        "num_encoder_layer": int(_mode_value(train_cfg, model_mode, "num_encoder_layer", "soleformer_num_encoder_layer")),
+        "dropout": float(_mode_value(train_cfg, model_mode, "dropout", "soleformer_dropout")),
+        "num_epoch": int(_mode_value(train_cfg, model_mode, "epoch", "soleformer_epoch")),
+        "batch_size": int(_mode_value(train_cfg, model_mode, "batch_size", "soleformer_batch_size")),
+        "learning_rate": float(_mode_value(train_cfg, model_mode, "learning_rate", "soleformer_learning_rate")),
+        "weight_decay": float(_mode_value(train_cfg, model_mode, "weight_decay", "soleformer_weight_decay")),
+        "sequence_len": int(_mode_value(train_cfg, model_mode, "sequence_len", "soleformer_sequence_len")),
         "input_dim": train_input_feature.shape[1],
         "output_dim": target_df.shape[1],
         "num_joints": target_df.shape[1] // 3,
@@ -352,14 +491,21 @@ def start(args):
     pressnet_loaded = False
 
     if cycle_training_active:
+        accel_input_dim = parameters["output_dim"]
+        if parameters["use_lower_leg_angles_for_accelnet"]:
+            # Two feet orientation vectors (ankle->toe), 3 axes each.
+            accel_input_dim = 6
+
         accel_net = AccelNet(
-            input_dim=parameters["output_dim"],
+            input_dim=accel_input_dim,
             output_dim=int(train_imu_scaled.shape[1]),
             dropout=parameters["dropout"],
         ).to(device)
         accel_net._pressure_dim = int(train_pressure_scaled.shape[1])
         accel_net._imu_dim = int(train_imu_scaled.shape[1])
         accel_net._imu_start = int(train_pressure_scaled.shape[1])
+        accel_net._use_lower_leg_angles_for_accelnet = bool(parameters["use_lower_leg_angles_for_accelnet"])
+        accel_net._foot_orientation_indices = (17, 18, 21, 22) if parameters["num_joints"] >= 23 else None
         press_net = PressNet(
             input_dim=parameters["output_dim"],
             output_dim=int(train_pressure_scaled.shape[1]),
@@ -369,7 +515,8 @@ def start(args):
 
         # Optional: Pretrain auxiliaries if enabled and no checkpoint provided
         if pretrain_accelnet_enabled and not accelnet_pretrained_path:
-            accelnet_save_path = "./results/pretrained_aux/accelnet_pretrained.pt"
+            accelnet_save_path = os.path.join(".", "results", "pretrained_aux", "accelnet_pretrained.pt")
+            os.makedirs(os.path.dirname(accelnet_save_path), exist_ok=True)
             print("\n" + "="*60)
             print("PRETRAINING AccelNet (pose → 6DoF IMU)...")
             print("="*60)
@@ -386,7 +533,8 @@ def start(args):
             print(f"Using newly pretrained AccelNet from {accelnet_save_path}")
 
         if pretrain_pressnet_enabled and not pressnet_pretrained_path:
-            pressnet_save_path = "./results/pretrained_aux/pressnet_pretrained.pt"
+            pressnet_save_path = os.path.join(".", "results", "pretrained_aux", "pressnet_pretrained.pt")
+            os.makedirs(os.path.dirname(pressnet_save_path), exist_ok=True)
             print("\n" + "="*60)
             print("PRETRAINING PressNet (pose → foot pressure)...")
             print("="*60)
@@ -436,6 +584,8 @@ def start(args):
             weight_3d_loss=parameters["pose_loss_weight_3d"],
             enable_imu_cycle=parameters["enable_imu_cycle_loss"],
             enable_pressure_cycle=parameters["enable_pressure_cycle_loss"],
+            use_lower_leg_angles_for_accelnet=parameters["use_lower_leg_angles_for_accelnet"],
+            accelnet_foot_indices=getattr(accel_net, "_foot_orientation_indices", None),
         )
 
         print(
@@ -446,15 +596,19 @@ def start(args):
     else:
         criterion = Skeleton_Loss()
 
-    trainable_params = list(model.parameters())
+    trainable_modules = [model]
     if cycle_training_active and not freeze_pretrained_cycle_nets:
-        trainable_params.extend(list(accel_net.parameters()))
-        trainable_params.extend(list(press_net.parameters()))
+        trainable_modules.extend([accel_net, press_net])
+
+    param_groups = _build_linear_weight_decay_param_groups(
+        modules=trainable_modules,
+        weight_decay=parameters["weight_decay"],
+    )
 
     optimizer = torch.optim.AdamW(
-        trainable_params,
+        param_groups,
         lr=parameters["learning_rate"],
-        weight_decay=parameters["weight_decay"],
+        weight_decay=0.0,
         betas=(0.9, 0.999),
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -463,6 +617,15 @@ def start(args):
         factor=0.5,
         patience=5,
     )
+    wd_scheduler = None
+    if parameters["use_weight_decay_schedule"]:
+        wd_scheduler = WarmupCosineWeightDecayScheduler(
+            optimizer=optimizer,
+            base_weight_decay=parameters["weight_decay"],
+            min_weight_decay=parameters["min_weight_decay"],
+            warmup_epochs=parameters["weight_decay_warmup_epochs"],
+            total_epochs=parameters["num_epoch"],
+        )
 
     checkpoint_extra = {
         "skeleton_scaler_mean": skeleton_scaler.mean_.tolist(),
@@ -495,6 +658,10 @@ def start(args):
         "train_pose_loss_weight_3d": pose_loss_weight_3d,
         "train_imu_cycle_loss_weight": imu_cycle_loss_weight,
         "train_pressure_cycle_loss_weight": pressure_cycle_loss_weight,
+        "train_use_lower_leg_angles_for_accelnet": bool(parameters["use_lower_leg_angles_for_accelnet"]),
+        "train_use_weight_decay_schedule": bool(parameters["use_weight_decay_schedule"]),
+        "train_weight_decay_warmup_epochs": int(parameters["weight_decay_warmup_epochs"]),
+        "train_min_weight_decay": float(parameters["min_weight_decay"]),
         "train_freeze_pretrained_cycle_nets": bool(freeze_pretrained_cycle_nets),
         "accelnet_pretrained_path": accelnet_pretrained_path,
         "pressnet_pretrained_path": pressnet_pretrained_path,
@@ -516,11 +683,11 @@ def start(args):
             }
         )
 
-    best_ckpt_path = f"./results/weight/best_skeleton_model_{parameters['model_mode']}.pth"
-    final_ckpt_path = f"./results/weight/final_skeleton_model_{parameters['model_mode']}.pth"
+    best_ckpt_path = os.path.join(".", "results", "weight", f"best_skeleton_model_{parameters['model_mode']}.pth")
+    final_ckpt_path = os.path.join(".", "results", "weight", f"final_skeleton_model_{parameters['model_mode']}.pth")
 
     if cycle_training_active:
-        train_mse_with_cycle(
+        loss_history = train_mse_with_cycle(
             model,
             train_loader,
             val_loader,
@@ -531,9 +698,10 @@ def start(args):
             save_path=best_ckpt_path,
             device=device,
             checkpoint_extra=checkpoint_extra,
+            wd_scheduler=wd_scheduler,
         )
     else:
-        train_mse(
+        loss_history = train_mse(
             model,
             train_loader,
             val_loader,
@@ -544,7 +712,35 @@ def start(args):
             save_path=best_ckpt_path,
             device=device,
             checkpoint_extra=checkpoint_extra,
+            wd_scheduler=wd_scheduler,
         )
+
+    learning_results_dir = os.path.join(".", "results", "learning_results")
+    os.makedirs(learning_results_dir, exist_ok=True)
+    learning_results_path = os.path.join(
+        learning_results_dir,
+        f"Learning_results_{parameters['model_mode']}.csv",
+    )
+
+    if loss_history:
+        # Build deterministic fieldnames in consistent order
+        fieldnames = ["epoch", "train_loss", "val_loss"]
+        component_keys = set()
+        for row in loss_history:
+            for key in row.keys():
+                if key not in fieldnames:
+                    component_keys.add(key)
+        # Sort component keys for deterministic ordering
+        fieldnames.extend(sorted(component_keys))
+
+        with open(learning_results_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(loss_history)
+
+        print(f"Saved learning curves to {learning_results_path}")
+    else:
+        print("Warning: loss history is empty; no learning results CSV was written.")
 
     final_checkpoint = {
         "model_state_dict": model.state_dict(),
@@ -613,5 +809,20 @@ def get_parser(add_help=False):
     parser.add_argument("--include_target_positions", type=str, default=None)
     parser.add_argument("--include_target_joint_angles", type=str, default=None)
     parser.add_argument("--joint_angles_tab_suffix", type=str, default=None)
+
+    # SoleFormer-only overrides (used when --model_mode soleformer)
+    parser.add_argument("--soleformer_d_model", type=int, default=None)
+    parser.add_argument("--soleformer_n_head", type=int, default=None)
+    parser.add_argument("--soleformer_num_encoder_layer", type=int, default=None)
+    parser.add_argument("--soleformer_dropout", type=float, default=None)
+    parser.add_argument("--soleformer_epoch", type=int, default=None)
+    parser.add_argument("--soleformer_batch_size", type=int, default=None)
+    parser.add_argument("--soleformer_learning_rate", type=float, default=None)
+    parser.add_argument("--soleformer_weight_decay", type=float, default=None)
+    parser.add_argument("--soleformer_sequence_len", type=int, default=None)
+    parser.add_argument("--soleformer_use_lower_leg_angles_for_accelnet", type=str, default=None)
+    parser.add_argument("--soleformer_use_weight_decay_schedule", type=str, default=None)
+    parser.add_argument("--soleformer_weight_decay_warmup_epochs", type=int, default=None)
+    parser.add_argument("--soleformer_min_weight_decay", type=float, default=None)
 
     return parser

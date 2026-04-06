@@ -1,10 +1,16 @@
-# Ignore all data files
+# Ignore not-raw data files
 *.csv
 *.xlsx
 *.txt
+
+!data\raw_data\Awinda\Awinda_001CcSs_3_shadow_training.xlsx
+!data\raw_data\Awinda\Awinda_001CcSs_3_shadow_test.csv
+!data\raw_data\Insoles\Soles_001CcSs_3_shadow_training.csv
+!data\raw_data\Insoles\Soles_001CcSs_3_shadow_test.csv
 
 # Ignore model files (it's heavy)
 *.pth
 
 # Except
 !readme.txt
+!sources\ablation_commands.csv

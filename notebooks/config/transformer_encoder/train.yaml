@@ -16,7 +16,7 @@ train:
   dropout: 0.1
 
   # Training
-  epoch: 100  # Increase for better performance (higher cost/time)
+  epoch: 40  # Adjust in function of training and validation loss curves
   batch_size: 64
 
   # Optimization
@@ -24,7 +24,7 @@ train:
   weight_decay: 0.001
 
   # Preprocessing
-  sequence_len: 32  # Must match prediction sequence_len
+  sequence_len: 32  # Default for non-SoleFormer modes
   smoothing_sigma: 0.0
   use_time_feature: false  # Add normalized insole time as one extra input channel
   use_gradient_data: false
@@ -32,27 +32,47 @@ train:
   grad_polyorder: 2  # Savitzky-Golay polynomial order
   grad_smooth_grad1: false  # Smooth first derivative before second derivative
 
-  # Full SoleFormer default (paper-style: cycle losses enabled, auxiliaries pretrained then frozen)
-  use_cycle_loss: true
+  # SoleFormer-specific hyperparameters (kept separate from shared defaults)
+  soleformer_d_model: 512
+  soleformer_n_head: 8
+  soleformer_num_encoder_layer: 2  # Figure 3 shows a two-tier cross-attention block
+  soleformer_dropout: 0.1
+  soleformer_epoch: 40
+  soleformer_batch_size: 64
+  soleformer_learning_rate: 0.0003
+  soleformer_weight_decay: 0.0001
+  soleformer_sequence_len: 32  # Increased context for KickCap dynamics while keeping SoleFormer-only scope
+  soleformer_use_lower_leg_angles_for_accelnet: true  # Paper-style: derive foot orientation from ankle->toe for IMU cycle
+  soleformer_use_weight_decay_schedule: true  # Warm-up + cosine decay for weight decay
+  soleformer_weight_decay_warmup_epochs: 5
+  soleformer_min_weight_decay: 0.0
+
+  # Shared cycle loss defaults (disabled for non-soleformer modes)
+  use_cycle_loss: false  # Set to true only for soleformer; other modes will override via mode check
   enable_imu_cycle_loss: true
   enable_pressure_cycle_loss: true
   pose_loss_weight_2d: 1.0
   pose_loss_weight_3d: 1.0
-  imu_cycle_loss_weight: 0.5
-  pressure_cycle_loss_weight: 0.5
+  imu_cycle_loss_weight: 1.0
+  pressure_cycle_loss_weight: 1.0
   freeze_pretrained_cycle_nets: true
   accelnet_pretrained_path: null  # Optional: path to pre-trained AccelNet checkpoint
   pressnet_pretrained_path: null  # Optional: path to pre-trained PressNet checkpoint
 
   # Auxiliary net pretraining (for AccelNet and PressNet if enabled)
-  pretrain_accelnet: true  # Pretrain AccelNet (pose → IMU) on pose→IMU task
-  pretrain_pressnet: true  # Pretrain PressNet (pose → pressure) on pose→pressure task
+  pretrain_accelnet: false  # Pretrain AccelNet (pose → IMU) on pose→IMU task; enabled for soleformer only
+  pretrain_pressnet: false  # Pretrain PressNet (pose → pressure) on pose→pressure task; enabled for soleformer only
   pretrain_epochs: 30  # Number of epochs for auxiliary net pretraining
   pretrain_learning_rate: 0.001  # Learning rate for auxiliary net pretraining
 
+  # SoleFormer-specific cycle loss settings
+  soleformer_use_cycle_loss: true
+  soleformer_pretrain_accelnet: true
+  soleformer_pretrain_pressnet: true
+
   # SoleFormer targets (used only when model_mode=soleformer)
   include_target_positions: true
-  include_target_joint_angles: true
+  include_target_joint_angles: false  # Keep target as available 3D joint positions from your data
   joint_angles_tab_suffix: "Joint_Angles_ZXY"
 
 

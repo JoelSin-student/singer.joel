@@ -155,26 +155,25 @@ class PressNet(nn.Module):
     """Pre-trained ResNet-based MLP for cycle consistency: predicts foot pressure from pose."""
     def __init__(self, input_dim, output_dim=32, hidden_dim=256, dropout=0.1):
         super().__init__()
-        self.fc1 = nn.Sequential(
+        self.fc_in = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
-        self.fc2 = nn.Sequential(
+        self.fc_res = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
-        self.fc3 = nn.Linear(hidden_dim, output_dim)
+        self.fc_out = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
         """Input: pose features (batch, seq_len, pose_dim) or flattened"""
-        residual = x
-        out = self.fc1(x)
-        out = self.fc2(out)
-        out = self.fc3(out)
+        out = self.fc_in(x)
+        out = out + self.fc_res(out)
+        out = self.fc_out(out)
         return out
 
 
@@ -410,6 +409,8 @@ class DoubleCycleConsistencyLoss(nn.Module):
         weight_3d_loss=1.0,
         enable_imu_cycle=True,
         enable_pressure_cycle=True,
+        use_lower_leg_angles_for_accelnet=False,
+        accelnet_foot_indices=None,
     ):
         super().__init__()
         self.accel_net = accel_net
@@ -421,6 +422,39 @@ class DoubleCycleConsistencyLoss(nn.Module):
         self.weight_3d_loss = weight_3d_loss
         self.enable_imu_cycle = enable_imu_cycle
         self.enable_pressure_cycle = enable_pressure_cycle
+        self.use_lower_leg_angles_for_accelnet = bool(use_lower_leg_angles_for_accelnet)
+        self.accelnet_foot_indices = accelnet_foot_indices
+
+    @staticmethod
+    def extract_foot_orientation_features(pose, foot_indices=None):
+        """Extract ankle->toe orientation vectors for both feet.
+
+        Returns a tensor of shape (batch, seq_len, 6) when possible.
+        Returns None if required joints are unavailable.
+        """
+        if pose.dim() != 3 or pose.shape[-1] % 3 != 0:
+            return None
+
+        n_joints = pose.shape[-1] // 3
+        if foot_indices is None:
+            if n_joints >= 23:
+                # Awinda 23-joint targets: RightFoot/RightToe and LeftFoot/LeftToe.
+                right_ankle, right_toe, left_ankle, left_toe = 17, 18, 21, 22
+            else:
+                return None
+        else:
+            right_ankle, right_toe, left_ankle, left_toe = foot_indices
+
+        if max(right_ankle, right_toe, left_ankle, left_toe) >= n_joints:
+            return None
+
+        joints = pose.view(*pose.shape[:-1], n_joints, 3)
+        right_vec = joints[:, :, right_toe, :] - joints[:, :, right_ankle, :]
+        left_vec = joints[:, :, left_toe, :] - joints[:, :, left_ankle, :]
+
+        right_vec = F.normalize(right_vec, dim=-1, eps=1e-6)
+        left_vec = F.normalize(left_vec, dim=-1, eps=1e-6)
+        return torch.cat([right_vec, left_vec], dim=-1)
 
     def forward(self, pred_pose, target_pose, input_imu, input_pressure):
         """Compute double-cycle consistency loss.
@@ -447,7 +481,16 @@ class DoubleCycleConsistencyLoss(nn.Module):
 
         imu_cycle_loss = pred_pose.new_tensor(0.0)
         if self.enable_imu_cycle:
-            pred_imu = self.accel_net(pred_pose)
+            accel_input = pred_pose
+            if self.use_lower_leg_angles_for_accelnet:
+                foot_orient = self.extract_foot_orientation_features(
+                    pred_pose,
+                    foot_indices=self.accelnet_foot_indices,
+                )
+                if foot_orient is not None:
+                    accel_input = foot_orient
+
+            pred_imu = self.accel_net(accel_input)
             if pred_imu.shape != input_imu.shape:
                 shared_t = min(pred_imu.shape[1], input_imu.shape[1])
                 shared_c = min(pred_imu.shape[2], input_imu.shape[2])
@@ -483,7 +526,6 @@ class DoubleCycleConsistencyLoss(nn.Module):
             "pose_3d_loss": pose_3d_loss.item(),
             "imu_cycle_loss": imu_cycle_loss.item(),
             "pressure_cycle_loss": pressure_cycle_loss.item(),
-            "total_loss": total_loss.item(),
         }
 
 
@@ -524,17 +566,23 @@ def train_mse(
     save_path,
     device,
     checkpoint_extra=None,
+    wd_scheduler=None,
 ):
     best_val_loss = float("inf")
+    history = []
 
     model_config = _build_model_config(model)
 
     start_time = time.time()
     pre_time = start_time
+    elaps_time_total_s = 0.0
     now_time = datetime.datetime.now()
     print(f"\n[train started at {now_time.strftime('%H:%M')}]")
 
     for epoch in range(num_epochs):
+        if wd_scheduler is not None:
+            wd_scheduler.step(epoch)
+
         model.train()
         train_loss = 0.0
 
@@ -567,6 +615,7 @@ def train_mse(
 
         scheduler.step(avg_val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
+        current_wd = optimizer.param_groups[0].get("weight_decay", 0.0)
 
         end_time = time.time()
         epoch_time_total_s = end_time - pre_time
@@ -586,8 +635,17 @@ def train_mse(
             f"Train Loss (MSE): {avg_train_loss:.6f}\n"
             f"Val Loss (MSE): {avg_val_loss:.6f}\n"
             f"LR        : {current_lr:.5f}\n"
+            f"WD        : {current_wd:.6f}\n"
             f"Time/epoch: {epoch_time_m}m {epoch_time_s}s | Total: {elaps_time_m}m {elaps_time_s}s\n"
             f"Estimated Finish: {est_finish_str}"
+        )
+
+        history.append(
+            {
+                "epoch": epoch + 1,
+                "train_loss": float(avg_train_loss),
+                "val_loss": float(avg_val_loss),
+            }
         )
 
         pre_time = end_time
@@ -606,6 +664,8 @@ def train_mse(
             torch.save(checkpoint, save_path)
             print(f">> Model saved at epoch {epoch + 1} (val_loss={best_val_loss:.6f})")
 
+    return history
+
 
 def train_mse_with_cycle(
     model,
@@ -618,16 +678,22 @@ def train_mse_with_cycle(
     save_path,
     device,
     checkpoint_extra=None,
+    wd_scheduler=None,
 ):
     best_val_loss = float("inf")
+    history = []
     model_config = _build_model_config(model)
 
     start_time = time.time()
     pre_time = start_time
+    elaps_time_total_s = 0.0
     now_time = datetime.datetime.now()
     print(f"\n[cycle train started at {now_time.strftime('%H:%M')}]")
 
     for epoch in range(num_epochs):
+        if wd_scheduler is not None:
+            wd_scheduler.step(epoch)
+
         model.train()
         train_total = 0.0
         train_pose = 0.0
@@ -700,6 +766,7 @@ def train_mse_with_cycle(
 
         scheduler.step(avg_val_total)
         current_lr = optimizer.param_groups[0]["lr"]
+        current_wd = optimizer.param_groups[0].get("weight_decay", 0.0)
 
         end_time = time.time()
         epoch_time_total_s = end_time - pre_time
@@ -722,8 +789,27 @@ def train_mse_with_cycle(
             f"Val Pose: {avg_val_pose:.6f} (2D={avg_val_pose2d:.6f}, 3D={avg_val_pose3d:.6f})\n"
             f"Val Cycles: IMU={avg_val_imu:.6f}, Pressure={avg_val_press:.6f}\n"
             f"LR        : {current_lr:.5f}\n"
+            f"WD        : {current_wd:.6f}\n"
             f"Time/epoch: {epoch_time_m}m {epoch_time_s}s | Total: {elaps_time_m}m {elaps_time_s}s\n"
             f"Estimated Finish: {est_finish_str}"
+        )
+
+        history.append(
+            {
+                "epoch": epoch + 1,
+                "train_loss": float(avg_train_total),
+                "val_loss": float(avg_val_total),
+                "train_pose_loss": float(avg_train_pose),
+                "val_pose_loss": float(avg_val_pose),
+                "train_pose_2d_loss": float(avg_train_pose2d),
+                "val_pose_2d_loss": float(avg_val_pose2d),
+                "train_pose_3d_loss": float(avg_train_pose3d),
+                "val_pose_3d_loss": float(avg_val_pose3d),
+                "train_imu_cycle_loss": float(avg_train_imu),
+                "val_imu_cycle_loss": float(avg_val_imu),
+                "train_pressure_cycle_loss": float(avg_train_press),
+                "val_pressure_cycle_loss": float(avg_val_press),
+            }
         )
 
         pre_time = end_time
@@ -742,6 +828,8 @@ def train_mse_with_cycle(
             torch.save(checkpoint, save_path)
             print(f">> Model saved at epoch {epoch + 1} (val_total={best_val_loss:.6f})")
 
+    return history
+
 
 def pretrain_accelnet(
     accelnet,
@@ -749,7 +837,7 @@ def pretrain_accelnet(
     val_loader,
     num_epochs=50,
     learning_rate=0.001,
-    save_path="./results/pretrained_aux/accelnet_pretrained.pt",
+    save_path=None,
     device="cpu",
 ):
     """
@@ -770,6 +858,9 @@ def pretrain_accelnet(
         Extracts IMU from columns [pressure_dim : pressure_dim + imu_dim].
         Flattens skeleton (batch, seq_len, pose_dim) as input to AccelNet.
     """
+    if save_path is None:
+        save_path = os.path.join(".", "results", "pretrained_aux", "accelnet_pretrained.pt")
+    
     optimizer = torch.optim.Adam(accelnet.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     criterion = nn.MSELoss()
@@ -780,6 +871,7 @@ def pretrain_accelnet(
     
     start_time = time.time()
     pre_time = start_time
+    elaps_time_total_s = 0.0
     now_time = datetime.datetime.now()
     print(f"\n[AccelNet pretraining started at {now_time.strftime('%H:%M')}]")
     
@@ -802,6 +894,13 @@ def pretrain_accelnet(
             
             # Flatten skeleton as input: (batch, seq_len, pose_dim) → (batch, seq_len, pose_dim)
             input_pose = skeleton  # skeleton is already (batch, seq_len, pose_dim)
+            if bool(getattr(accelnet, "_use_lower_leg_angles_for_accelnet", False)):
+                foot_orient = DoubleCycleConsistencyLoss.extract_foot_orientation_features(
+                    input_pose,
+                    foot_indices=getattr(accelnet, "_foot_orientation_indices", None),
+                )
+                if foot_orient is not None:
+                    input_pose = foot_orient
             
             optimizer.zero_grad()
             pred_imu = accelnet(input_pose)  # (batch, seq_len, imu_dim)
@@ -844,6 +943,13 @@ def pretrain_accelnet(
                 imu_end = imu_start + imu_dim
                 target_imu = pressure[:, :, imu_start:imu_end]
                 input_pose = skeleton
+                if bool(getattr(accelnet, "_use_lower_leg_angles_for_accelnet", False)):
+                    foot_orient = DoubleCycleConsistencyLoss.extract_foot_orientation_features(
+                        input_pose,
+                        foot_indices=getattr(accelnet, "_foot_orientation_indices", None),
+                    )
+                    if foot_orient is not None:
+                        input_pose = foot_orient
                 
                 pred_imu = accelnet(input_pose)
                 if pred_imu.shape[-1] != target_imu.shape[-1]:
@@ -893,7 +999,7 @@ def pretrain_pressnet(
     val_loader,
     num_epochs=50,
     learning_rate=0.001,
-    save_path="./results/pretrained_aux/pressnet_pretrained.pt",
+    save_path=None,
     device="cpu",
 ):
     """
@@ -914,6 +1020,9 @@ def pretrain_pressnet(
         Extracts pressure from first <pressure_dim> columns.
         Flattens skeleton (batch, seq_len, pose_dim) as input to PressNet.
     """
+    if save_path is None:
+        save_path = os.path.join(".", "results", "pretrained_aux", "pressnet_pretrained.pt")
+    
     optimizer = torch.optim.Adam(pressnet.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     criterion = nn.MSELoss()
@@ -923,6 +1032,7 @@ def pretrain_pressnet(
     
     start_time = time.time()
     pre_time = start_time
+    elaps_time_total_s = 0.0
     now_time = datetime.datetime.now()
     print(f"\n[PressNet pretraining started at {now_time.strftime('%H:%M')}]")
     
@@ -937,7 +1047,7 @@ def pretrain_pressnet(
             
             # Extract pressure from first pressure_dim columns
             # Assume: pressure_batch = [pressure_channels | imu_dim | possibly_more]
-            pressure_dim = int(getattr(pressnet, "_pressure_dim", pressnet.fc3.out_features))
+            pressure_dim = int(getattr(pressnet, "_pressure_dim", pressnet.fc_out.out_features))
             target_pressure = pressure[:, :, :pressure_dim]  # (batch, seq_len, pressure_dim)
             
             # Flatten skeleton as input
@@ -962,7 +1072,7 @@ def pretrain_pressnet(
                 pressure = pressure.to(device)
                 skeleton = skeleton.to(device)
                 
-                pressure_dim = int(getattr(pressnet, "_pressure_dim", pressnet.fc3.out_features))
+                pressure_dim = int(getattr(pressnet, "_pressure_dim", pressnet.fc_out.out_features))
                 target_pressure = pressure[:, :, :pressure_dim]
                 input_pose = skeleton
                 
@@ -1016,7 +1126,7 @@ def save_predictions(predictions, model, frame_indices=None, output_stem=None, c
         columns = [f"target_{i}" for i in range(predictions.shape[1])]
 
     output_name = f"Predicted_skeleton_{output_stem}" if output_stem else "Predicted_skeleton"
-    output_file = f"./results/output/{output_name}.csv"
+    output_file = os.path.join(".", "results", "output", f"{output_name}.csv")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     df_predictions = pd.DataFrame(predictions, columns=columns)

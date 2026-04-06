@@ -153,8 +153,8 @@ def start(args):
     if model_mode not in {"original", "simple_seq2seq", "soleformer"}:
         raise ValueError("predict.model_mode must be one of: original, simple_seq2seq, soleformer")
 
-    skeleton_dir = config["location"]["data_path"] + "/skeleton/"
-    insole_dir = config["location"]["data_path"] + "/Insole/"
+    skeleton_dir = os.path.join(config["location"]["data_path"], "skeleton")
+    insole_dir = os.path.join(config["location"]["data_path"], "Insole")
 
     skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)
     pair_tags = list(skeleton_insole_datapath_pairs.keys())

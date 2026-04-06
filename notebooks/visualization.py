@@ -74,7 +74,29 @@ def _process_skeleton_data(df):
     return frames_data
 
 
-def _create_frame_traces(frame_real, frame_pred, bones):
+def _joint_xyz(frame, idx):
+    if idx >= len(frame['x']):
+        return [], [], []
+    return [frame['x'][idx]], [frame['z'][idx]], [frame['y'][idx]]
+
+
+def _all_bones_xyz(frame, bones):
+    xs, ys, zs = [], [], []
+    for start, end in bones:
+        if start < len(frame['x']) and end < len(frame['x']):
+            xs.extend([frame['x'][start], frame['x'][end], None])
+            ys.extend([frame['z'][start], frame['z'][end], None])
+            zs.extend([frame['y'][start], frame['y'][end], None])
+    return xs, ys, zs
+
+
+def _bone_xyz(frame, start, end):
+    if start >= len(frame['x']) or end >= len(frame['x']):
+        return [], [], []
+    return [frame['x'][start], frame['x'][end]], [frame['z'][start], frame['z'][end]], [frame['y'][start], frame['y'][end]]
+
+
+def _create_frame_traces(frame_real, frame_pred, bones, joint_indices, showlegend=False):
     traces = []
 
     traces.append(
@@ -84,23 +106,22 @@ def _create_frame_traces(frame_real, frame_pred, bones):
             z=frame_real['y'],
             mode='markers',
             marker=dict(size=5, color='red', opacity=0.8),
-            name='Real Joints',
-            showlegend=True,
+            name='Real Joints (All)',
+            showlegend=showlegend,
         )
     )
-    for start, end in bones:
-        if start < len(frame_real['x']) and end < len(frame_real['x']):
-            traces.append(
-                go.Scatter3d(
-                    x=[frame_real['x'][start], frame_real['x'][end]],
-                    y=[frame_real['z'][start], frame_real['z'][end]],
-                    z=[frame_real['y'][start], frame_real['y'][end]],
-                    mode='lines',
-                    line=dict(color='red', width=2),
-                    name='Real Bones',
-                    showlegend=False,
-                )
-            )
+    real_bones_x, real_bones_y, real_bones_z = _all_bones_xyz(frame_real, bones)
+    traces.append(
+        go.Scatter3d(
+            x=real_bones_x,
+            y=real_bones_y,
+            z=real_bones_z,
+            mode='lines',
+            line=dict(color='red', width=2),
+            name='Real Bones (All)',
+            showlegend=showlegend,
+        )
+    )
 
     traces.append(
         go.Scatter3d(
@@ -109,23 +130,80 @@ def _create_frame_traces(frame_real, frame_pred, bones):
             z=frame_pred['y'],
             mode='markers',
             marker=dict(size=5, color='blue', opacity=0.8),
-            name='Predicted Joints',
-            showlegend=True,
+            name='Predicted Joints (All)',
+            showlegend=showlegend,
         )
     )
-    for start, end in bones:
-        if start < len(frame_pred['x']) and end < len(frame_pred['x']):
-            traces.append(
-                go.Scatter3d(
-                    x=[frame_pred['x'][start], frame_pred['x'][end]],
-                    y=[frame_pred['z'][start], frame_pred['z'][end]],
-                    z=[frame_pred['y'][start], frame_pred['y'][end]],
-                    mode='lines',
-                    line=dict(color='blue', width=2),
-                    name='Predicted Bones',
-                    showlegend=False,
-                )
+    pred_bones_x, pred_bones_y, pred_bones_z = _all_bones_xyz(frame_pred, bones)
+    traces.append(
+        go.Scatter3d(
+            x=pred_bones_x,
+            y=pred_bones_y,
+            z=pred_bones_z,
+            mode='lines',
+            line=dict(color='blue', width=2),
+            name='Predicted Bones (All)',
+            showlegend=showlegend,
+        )
+    )
+
+    for joint_idx in joint_indices:
+        real_x, real_y, real_z = _joint_xyz(frame_real, joint_idx)
+        traces.append(
+            go.Scatter3d(
+                x=real_x,
+                y=real_y,
+                z=real_z,
+                mode='markers',
+                marker=dict(size=6, color='red', opacity=0.9),
+                name=f'Real Joint {joint_idx}',
+                visible='legendonly',
+                showlegend=showlegend,
             )
+        )
+
+        pred_x, pred_y, pred_z = _joint_xyz(frame_pred, joint_idx)
+        traces.append(
+            go.Scatter3d(
+                x=pred_x,
+                y=pred_y,
+                z=pred_z,
+                mode='markers',
+                marker=dict(size=6, color='blue', opacity=0.9),
+                name=f'Predicted Joint {joint_idx}',
+                visible='legendonly',
+                showlegend=showlegend,
+            )
+        )
+
+    for bone_idx, (start, end) in enumerate(bones):
+        real_bx, real_by, real_bz = _bone_xyz(frame_real, start, end)
+        traces.append(
+            go.Scatter3d(
+                x=real_bx,
+                y=real_by,
+                z=real_bz,
+                mode='lines',
+                line=dict(color='red', width=3),
+                name=f'Real Bone {bone_idx} ({start}-{end})',
+                visible='legendonly',
+                showlegend=showlegend,
+            )
+        )
+
+        pred_bx, pred_by, pred_bz = _bone_xyz(frame_pred, start, end)
+        traces.append(
+            go.Scatter3d(
+                x=pred_bx,
+                y=pred_by,
+                z=pred_bz,
+                mode='lines',
+                line=dict(color='blue', width=3),
+                name=f'Predicted Bone {bone_idx} ({start}-{end})',
+                visible='legendonly',
+                showlegend=showlegend,
+            )
+        )
 
     return traces
 
@@ -158,12 +236,12 @@ def _resolve_files(config, args):
     if pred_file_arg:
         file_path_predict = Path(pred_file_arg)
     else:
-        pred_dir = Path('./results/output')
+        pred_dir = Path(".") / "results" / "output"
         mode_candidates = list(pred_dir.glob(f'Predicted_skeleton*{model_mode}*.csv'))
         all_candidates = list(pred_dir.glob('Predicted_skeleton*.csv'))
         candidates = mode_candidates if mode_candidates else all_candidates
         if not candidates:
-            raise FileNotFoundError('No Predicted_skeleton*.csv file found in ./results/output')
+            raise FileNotFoundError('No Predicted_skeleton*.csv file found in results/output')
         # When multiple files exist, use the most recently modified
         file_path_predict = max(candidates, key=lambda p: p.stat().st_mtime)
 
@@ -217,7 +295,11 @@ def start(args=None):
     # CLI arguments override config values.
     start_frame = int((args.start_frame if args and args.start_frame is not None else None) or config['visual'].get('start_frame', 0))
     step = int((args.step if args and args.step is not None else None) or config['visual'].get('step', 3))
-    output_dir_config = (args.output_html if args and args.output_html else None) or config['visual'].get('output_html', './results/animation')
+    output_dir_config = (
+        (args.output_html if args and args.output_html else None)
+        or config['visual'].get('output_html', None)
+        or os.path.join(".", "results", "animation")
+    )
     
     real_tag = _extract_tag_from_real_file(file_path_real)
     pred_tag = _extract_tag_from_pred_file(file_path_predict, model_mode)
@@ -250,13 +332,25 @@ def start(args=None):
     if not frames_data_real or not frames_data_pred:
         raise ValueError('No visualization frames available after slicing. Check start_frame/step settings.')
 
+    max_joint_count = max(
+        max((len(frame['x']) for frame in frames_data_real), default=0),
+        max((len(frame['x']) for frame in frames_data_pred), default=0),
+    )
+    joint_indices = list(range(max_joint_count))
+
     fig = go.Figure()
-    initial_traces = _create_frame_traces(frames_data_real[0], frames_data_pred[0], bones)
+    initial_traces = _create_frame_traces(
+        frames_data_real[0],
+        frames_data_pred[0],
+        bones,
+        joint_indices,
+        showlegend=True,
+    )
     for trace in initial_traces:
         fig.add_trace(trace)
 
     frames = [
-        go.Frame(data=_create_frame_traces(real, pred, bones), name=f'frame{i}')
+        go.Frame(data=_create_frame_traces(real, pred, bones, joint_indices, showlegend=False), name=f'frame{i}')
         for i, (real, pred) in enumerate(zip(frames_data_real, frames_data_pred))
     ]
     fig.frames = frames
@@ -267,6 +361,13 @@ def start(args=None):
         width=1000,
         height=1000,
         showlegend=True,
+        legend=dict(
+            x=1.02,
+            y=1.0,
+            yanchor='top',
+            xanchor='left',
+            itemsizing='constant',
+        ),
         updatemenus=[{
             'buttons': [
                 {'args': [None, {'frame': {'duration': 50, 'redraw': True}, 'fromcurrent': True}], 'label': 'Play', 'method': 'animate'},
