@@ -1,7 +1,7 @@
 import torch
 import os
 
-weight_path = os.path.join(".", "results", "weight", "best_skeleton_model.pth")  # Weight file path
+weight_path = os.path.join(".", "results", "weight", "best_skeleton_model_soleformer.pth")  # Weight file path
 checkpoint = torch.load(weight_path, map_location="cpu")  # Use CPU when GPU is unavailable
 
 

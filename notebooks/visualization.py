@@ -41,8 +41,8 @@ def _find_xyz_columns(df):
         named.setdefault(name, {})[axis] = col
 
     ordered = []
-    for name in sorted(named.keys()):
-        axes = named[name]
+    # Preserve first-seen joint order from the CSV to keep bone indexing consistent.
+    for axes in named.values():
         if all(k in axes for k in ('X', 'Y', 'Z')):
             ordered.append((axes['X'], axes['Y'], axes['Z']))
     return ordered
@@ -53,7 +53,7 @@ def _process_skeleton_data(df):
     if not xyz_triplets:
         raise ValueError(
             "Could not detect 3D coordinate columns. Expected columns like X.i/Y.i/Z.i "
-            "or pos::X.i/pos::Y.i/pos::Z.i."
+            "or pos::X.i/pos::Y.i/pos::Z.i, or named triplets like pos::Pelvis x/y/z."
         )
 
     frames_data = []

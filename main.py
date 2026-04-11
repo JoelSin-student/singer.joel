@@ -11,9 +11,7 @@ def main():
     processors = {
         'train': iml.import_module('notebooks.train'),
         'predict': iml.import_module('notebooks.predict'),
-        'visual': iml.import_module('notebooks.visualization'),
-        # 'evaluation': iml.import_module('processor.evaluation'),
-        # 'module': iml.import_module('processor.module'),
+        'visual': iml.import_module('notebooks.visualization')
     }
 
     # read main-parser

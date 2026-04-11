@@ -18,3 +18,5 @@
 		- Other testing files: we can only predict one file at a time. In this folder are the other testing files
 
 - subject_anthropo.txt: anthropometric information of individualized Awinda model
+
+- ablation_commands.csv: extensive table of commands for an ablation study of the SoleFormer algorithm

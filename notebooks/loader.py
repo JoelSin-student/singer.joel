@@ -14,6 +14,39 @@ from collections import defaultdict
 from torch.utils.data import Dataset
 from scipy.signal import savgol_filter
 
+
+def _repo_root():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+
+
+def _looks_like_path_key(key):
+    return key in {"output_html"} or key.endswith(("_path", "_dir", "_file", "_html"))
+
+
+def _resolve_path_value(value, base_dir):
+    if not isinstance(value, str):
+        return value
+
+    stripped = value.strip()
+    if not stripped:
+        return value
+
+    if os.path.isabs(stripped):
+        return stripped
+
+    if stripped.startswith(("http://", "https://", "ftp://", "s3://")):
+        return stripped
+
+    return os.path.abspath(os.path.join(base_dir, stripped))
+
+
+def _resolve_path_values(mapping, base_dir):
+    for key, value in list(mapping.items()):
+        if isinstance(value, dict):
+            _resolve_path_values(value, base_dir)
+        elif _looks_like_path_key(key):
+            mapping[key] = _resolve_path_value(value, base_dir)
+
 def load_config(args,config_path, model):
     """Load a YAML file from the given path and return it as a Python object.
     Args:
@@ -21,9 +54,13 @@ def load_config(args,config_path, model):
     Returns:
         dict: Dictionary converted from YAML content.
     """
+    repo_root = _repo_root()
+
     # If config_path is not provided, infer it from model name and mode.
     if config_path is None:
-        config_path = os.path.join('notebooks', 'config', model, f'{args.mode}.yaml')
+        config_path = os.path.join(repo_root, 'notebooks', 'config', model, f'{args.mode}.yaml')
+    elif not os.path.isabs(config_path):
+        config_path = os.path.abspath(os.path.join(repo_root, config_path))
     
     # Print the config file currently in use.
     print(f"<load config>")
@@ -71,6 +108,10 @@ def load_config(args,config_path, model):
         print("Applied CLI overrides:")
         for line in override_log:
             print(f"- {line}")
+
+    # Resolve path-like configuration values relative to the repository root
+    # so training behaves the same regardless of the current working directory.
+    _resolve_path_values(config, repo_root)
 
     return config
 
