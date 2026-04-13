@@ -1,47 +1,29 @@
 # KickCap first tries on existing pipelines
 
 ## How to use
-To preprocess the data, we use the `notebooks/usefull_tools/data_preprocesing.ipynb` notebook, just run it all (it founds the `data/raw_data` directory and outputs in `data/clean_data`). Then, we choose the training and testing data in the `data/clean_data` directory and copy-paste them in `data/training_data` and `data/test_data`, with the OpenGo preprocessed data in the `Insole` folders and the Awinda preprocessed data in the `skeleton` folders. You will find a folder `Other testing files` in each subfolder of `data/test_data`, because each prediction is on unique files, so this is a place to store the other data you will test after the current ones.
+Follow the `main.ipynb` notebook at the root of the repository. Preprocessing founds the `data/raw_data` directory and outputs in `data/clean_data` as well as the usable data folders `data/train_data`, `data/test_data`. The OpenGo preprocessed data in the `Insole` folders and the Awinda preprocessed data in the `skeleton` folders. You will find a folder `Other files` in each subfolder of those folders, to easily manipulate training and testing data if needed.
 
-To train the Transformer model, predict skeleton joints dimensions from OpenGo data and visualize the resulting output compared to the ground-truth data, we use the terminal on the computer (replace <...> by the actual names):
+To train the model, predict skeleton joints dimensions from OpenGo data and visualize the resulting output compared to the ground-truth data, we normally use the terminal on the computer. However, I simplified the procedure by putting the commandlines in `main.ipynb`. Just follow the notebook.
 
-if you have a kickcap environment (packages available in the `environment.yml` file at the repository's root) in `C:/Users/<username>/anaconda3/envs` to run python and packages:
-```
-conda activate kickcap
-```
-Then set the working directory to the repository root:
-```
-cd <repository root on the computer>/singer.joel
-```
-Then launch training mode with:
-```
-python main.py train
-```
-Here, you can use either the original Transformer-Encoder model or a simple sequence-to-sequence Transformer model by changing model_mode in train.yaml, or override it in your terminal with the line:
-```
-python main.py train --model_mode <original|simple_seq2seq>
-```
-prediction mode with:
-```
-python main.py predict
-```
-Here, you can use either the original Transformer-Encoder outputed model or the simple sequence-to-sequence Transformer outputed model by changing model_mode and checkpoint path in predict.yaml, or override it in your terminal with the line:
-```
-python main.py predict --model_mode <original|simple_seq2seq> --checkpoint_file <.\results\weight\best_skeleton_model_original_mse.pth|.\results\weight\best_skeleton_model_simple_seq2seq_mse.pth>
-```
-visualization mode with:
-```
-python main.py visual
-```
-"train": model training (output model in `results/weight`)
+**First, you NEED to install the kickcap environment: `environment.yml`.** Then select this kernel when running `main.ipynb`.
 
-"predict": prediction over the test data in `data/test_data/Insole`, outputs the predicted joints' positions in `results/output`
-
-"visual": creates html file in `results/animation` to visualize prediction (file in `results/output`) and ground-truth (file in `data/test_data/skeleton`) skeletons in a web navigator
 
 
 ## How it is organised
-Data: gathers all source data, from raw unprocessed to training and test datasets:
+
+**environment.yml**: packages used.
+
+**main.ipynb**: to run preprocessing, (pre-)training, prediction and visualization.
+
+**main.py**: code controller.
+
+**main.Rmd**: to run statistical analyses about model quality.
+
+**PRETRAINING_GUIDE.md**: to understand auxiliaries pretraining for SoleFormer.
+
+**TODO.txt**: next things to do.
+
+**Data**: gathers all source data, from raw unprocessed to training and test datasets:
  - `data/raw_data/Awinda`: raw data of Awinda IMMU system (full-body no-hands)
  - `data/raw_data/Insoles`: raw data of OpenGo insole sensors
  - `data/clean_data`: preprocessed data of both systems
@@ -50,36 +32,44 @@ Data: gathers all source data, from raw unprocessed to training and test dataset
  - `data/test_data/Insole`: test datasets of preprocessed insole data
  - `data/test_data/skeleton`: test datasets of preprocessed Awinda data.
 
-Notebooks: all the code for model training, prediction and visualization:
- - `notebooks/config`: configuration files (what model to use, with what hyperparameters, where to find files, ...)
- - `notebooks/old`: old analyses
- - `notebooks/usefull_tools`: weight checking tool and data preprocessing notebook
+**Notebooks**: all the code for model training, prediction and visualization:
+ - `notebooks/config/transformer_encoder`: configuration files (what model to use, with what hyperparameters, where to find files, ...)
+ - `notebooks/usefull_tools`: weight checking tool, data preprocessing notebook and insole-extracted tabs synchroniser
  - `notebooks/loader.py`: functions and classes to load and arrange data for the model
  - `notebooks/model.py`: deep learning models
- - `notebooks/predict.py`: code to predict joints' positions from test insole data and trained model
- - `notebooks/train.py`: code to train the model with training data
- - `notebooks/util.py`: code to print logs information in the terminal
+ - `notebooks/train.py`: to train the model with training data
+ - `notebooks/predict.py`: to predict joints' positions from test insole data and trained model
  - `notebooks/visualization.py`: code to create an animation comparing ground-truth and predicted skeletons.
+ - `notebooks/util.py`: code to print logs information in the terminal
 
-Report: R markdown, references and images for HTML project report.
+**Report**: R markdown, references and images for HTML project report.
 
-Results: all analyses' results:
+**Results**: all analyses' results:
  - `results/animation`: HTML skeletons' animation
+ - `results/learning_results`: training and validation loss per epoch
  - `results/output`: predicted skeleton(s)
- - `notebooks/weight`: trained model(s)
+ - `results/pretrained_aux`: auxiliary networks models for SoleFormer model
+ - `results/weight`: trained model(s)
+ - `results/R`: statistical analyses output
 
-main.py: 
+
 
 ## Logic
 Project of the Python-R-Git course, focused on the technical aspect of the research question I try to answer (so far) during my M1 internship.
 
-This repository tries to incorporate the data we collected into already existing code from the literature and replicate its results. This requires to understand the existing code so as to adapt it to the structure of my data. Also, we made major modifications to existing functions to increase the reliability of the code and optimize the training, predicting and visualizing processes. Finally, R code produces the statistics about the performance of the Transformer model.
+This repository tries to incorporate the data we collected into already existing code from the literature and replicate its results. We found the code of one study. Our work mainly focused on:
+- understanding the code structure;
+- familiarizing with PyTorch library;
+- adapting/improving the code;
+- being able to use the same structure for other models;
+- testing different hyperparameters configurations for the best results.
 
-In particular, I work on a publicly available code of the P2P-Insole experiment ([Watanabe, Aisuwarya and Jing, 2025](https://doi.org/10.48550/arXiv.2505.00755), [GitHub link](https://github.com/onya31-git/P2P-Insole)) in which authors designed a custom device that replicates the one I am using for the data collection (see materials' list below). The aim of this code is to provide a 3D skeleton prediction using insole pressure sensors and accelerometers on the feet. It is a deep learning algorithm based on a transformer architecture (see original publication for more details). I am essentially trying to replicate their results with my data.
+We made major modifications to the original functions and structure to: increase the reliability of the code, have detailed information about the training process, optimize the training, prediction and visualization processes and outputs. Finally, R code produces the statistics about the performance of the Transformer model.
 
-The originality of my work compared to other similar publications on pose estimation with pressure sensors is the nature of the data that I am using: typical Kickboxing situations and the OpenGo-Awinda-Delsys materials used. I want to assess the feasibility of pose estimation using pressure sensors and 1 or 2 wrist' IMU in this complex physical activity. 
+In particular, I work from a publicly available code of the P2P-Insole experiment ([Watanabe, Aisuwarya and Jing, 2025](https://doi.org/10.48550/arXiv.2505.00755), [GitHub link](https://github.com/onya31-git/P2P-Insole)) in which authors designed a custom device that replicates the one I am using for the data collection (see materials' list below). The aim of this code is to provide a 3D skeleton prediction using insole pressure sensors and accelerometers at the feet level. It is a deep learning algorithm based on a transformer architecture (see original publication for more details). I am essentially trying to replicate their results with my data, and extending to other models, like SoleFormer ([Wu *et al.*, 2024a](https://doi.org/10.1145/3654777.3676418)).
 
-This repository tries to replicate a former work, adapting the existing code to make it work with other measurement devices and modality addressed. The results will give insights about what preprocessing steps and algorithm architecture would be better suited to the type of data I am using. 
+The originality of my work compared to other publications on pose estimation with pressure sensors is the nature of the data that I am using: participants are performing typical Kickboxing situations while wearing the OpenGo-Awinda-Delsys-video materials. Those first analyses will allow me to assess the feasibility of pose estimation using pressure sensors and 1 or 2 wrist' IMU in this complex physical activity, as well as giving directions on what to try next.
+
 
 ## Data collection 
 ### Materials
@@ -105,7 +95,7 @@ Other:
 
 Five Kickboxing situations of 3 min each, with 3 min of rest between them:
 
-1. *tech_vide*: 10 repetitions of single techniques alternating between left and right side: straight, hook, uppercut punches (head level), front, side kicks (stomach level), high, middle, low kicks.
+1. *tech_vide*: 10 repetitions of single techniques alternating between left and right side: straight, hook, uppercut punches (head level), front, side kicks (stomach level), high-, middle-, low-kicks.
 2. *tech_paos*: same task on the kicking pads.
 3. *shadow*: shadow-boxing (imaginary fight in the air).
 4. *leçon*: coach guiding an imaginary fight with the kicking pads.
@@ -119,18 +109,27 @@ Smart Insole ([Han *et al.*, 2024](https://openreview.net/forum?id=DX8C7rAi7O)) 
 
 MotionPRO ([Ren *et al.*, 2025](https://doi.org/10.1109%2FCVPR52734.2025.02585)) -> pressure collected by a sensing mat, large-scale dataset, FRAPPE algorithm fusing pressure and RGB (surely a next try to compare pressure-RGB and pressure-IMU fusions).
 
-PressInPose ([Gao *et al.*, 2024](https://doi.org/10.1145/3699773)) -> very similar study as ours (insole pressure sensors, wrist' IMU), but with 7 activities performed, in which boxing movements. Computationnaly expensive pipeline with synthetic data generation. Richness of pose estimation strategies. Synthetic data improves by around 5 to 20 % the MPJPE score. Very complete results, detailed paper. Highlights the need for a specialized architecture/preprocessing configuration for acyclic and upper-limb needing activities like boxing. Higher sampling rate induces higher accurracy. **Most interesting work**, but (code not available).
+PressInPose ([Gao *et al.*, 2024](https://doi.org/10.1145/3699773)) -> very similar study as ours (insole pressure sensors, wrist' IMU), but with 7 activities performed, in which boxing movements. Computationnaly expensive pipeline with synthetic data generation. Richness of pose estimation strategies. Synthetic data improves by around 5 to 20 % the MPJPE score. Very complete results, detailed paper. Highlights the need for a specialized architecture/preprocessing configuration for acyclic and upper-limb needing activities like boxing. Higher sampling rate induces higher accurracy. (code not available)
+
+KineticsSense ([Zhang et al., 2025](https://dl.acm.org/doi/10.1145/3749462)) -> predicting lower-limb EMG from plantar pressure and IMU.
+
+Ground Reaction Inertial Poser ([Hori et al., March 2026](https://doi.org/10.48550/arXiv.2603.16233)) -> OpenGo + 2 smart watches, refined feature extractors, control of a humanoid model in physics-aware virtual environment (code will be made available, e-mail confirmation).
 
 ## Workflow
 
 1. Understand code behaviour and links.
-2. Adjust entry:
+2. Adjust entries:
     - change paths and names,
     - adapt/add sample rate synchronising (60 Hz, Awinda) and other preprocessing steps (change df col names, ...),
     - adapt scales and dimensionnality (including transformer hyperparameters related to input and output dimensions).
-3. Adjust classes, functions and variables if needed.
+3. Adjust classes, functions and variables:
     - especially what is related to pressure, IMU and joints' features,
     - also the gradient features' computation,
     - also the model feed-forward behaviour,
-    - also the features' scalers.
+    - also the features' scalers,
+    - also the prediction dataframe,
+    - also the visualization procedure,
+    - also display useful information during processes.
 4. Test different hyperparameters' configurations.
+5. Add a robust structure to test multiple models with the same code.
+6. Test other models.
