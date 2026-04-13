@@ -15,6 +15,7 @@ from notebooks.loader import (
     restructure_insole_data,
 )
 from notebooks.model import SoleFormer, Transformer_Encoder, Transformer_Encoder_Seq2Seq, save_predictions
+from notebooks.util import format_ablation_tag, join_nonempty, resolve_ablation_id
 
 
 def _to_bool(value, default=False):
@@ -152,6 +153,9 @@ def start(args):
     model_mode = str(config["predict"].get("model_mode", "simple_seq2seq")).lower()
     if model_mode not in {"original", "simple_seq2seq", "soleformer"}:
         raise ValueError("predict.model_mode must be one of: original, simple_seq2seq, soleformer")
+
+    abl_id = resolve_ablation_id(config, "predict")
+    abl_tag = format_ablation_tag(abl_id)
 
     skeleton_dir = os.path.join(config["location"]["data_path"], "skeleton")
     insole_dir = os.path.join(config["location"]["data_path"], "Insole")
@@ -365,7 +369,7 @@ def start(args):
         final_predictions,
         args.model,
         frame_indices=output_frame_indices,
-        output_stem=f"{input_tag}_{model_mode}",
+        output_stem=join_nonempty(abl_tag, input_tag, model_mode),
         column_names=target_column_names,
     )
 
@@ -377,6 +381,7 @@ def get_parser(add_help=False):
     parser.add_argument("--config", type=str, default=None, help="Path to YAML file")
     parser.add_argument("--data_path", type=str, default=None)
     parser.add_argument("--checkpoint_file", type=str, default=None)
+    parser.add_argument("--abl_id", type=str, default=None)
 
     parser.add_argument("--d_model", type=int, default=None)
     parser.add_argument("--n_head", type=int, default=None)

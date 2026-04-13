@@ -29,3 +29,37 @@ def print_config(params):
     print(f"  Number of Joints: {params.get('num_joints', 'n/a')}")
     print(f"  Number of Dimensions: {params.get('num_dims', 'n/a')}")
     print("---" * 20)
+
+
+def format_ablation_tag(abl_id):
+    if abl_id is None:
+        return ""
+
+    tag = str(abl_id).strip()
+    if not tag:
+        return ""
+
+    return tag if tag.startswith("abl_id_") else f"abl_id_{tag}"
+
+
+def resolve_ablation_id(config, section_name):
+    section = config.get(section_name, {})
+    if isinstance(section, dict):
+        abl_id = section.get("abl_id", None)
+        if abl_id is not None and str(abl_id).strip():
+            return abl_id
+    abl_id = config.get("abl_id", None)
+    if abl_id is not None and str(abl_id).strip():
+        return abl_id
+    return None
+
+
+def join_nonempty(*parts):
+    values = []
+    for part in parts:
+        if part is None:
+            continue
+        text = str(part).strip()
+        if text:
+            values.append(text)
+    return "_".join(values)

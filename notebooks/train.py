@@ -35,7 +35,7 @@ from notebooks.model import (
     pretrain_accelnet,
     pretrain_pressnet,
 )
-from notebooks.util import print_config
+from notebooks.util import format_ablation_tag, join_nonempty, print_config, resolve_ablation_id
 
 
 def _to_bool(value, default=False):
@@ -144,6 +144,9 @@ def start(args):
     model_mode = str(config["train"].get("model_mode", "simple_seq2seq")).lower()
     if model_mode not in {"original", "simple_seq2seq", "soleformer"}:
         raise ValueError("train.model_mode must be one of: original, simple_seq2seq, soleformer")
+
+    abl_id = resolve_ablation_id(config, "train")
+    abl_tag = format_ablation_tag(abl_id)
 
     skeleton_dir = os.path.join(config["location"]["data_path"], "skeleton")
     insole_dir = os.path.join(config["location"]["data_path"], "Insole")
@@ -646,6 +649,7 @@ def start(args):
         "preprocessing_grad_polyorder": grad_polyorder,
         "preprocessing_grad_smooth_grad1": grad_smooth_grad1,
         "model_mode": parameters["model_mode"],
+        "abl_id": abl_id,
         "target_column_names": list(target_df.columns),
         "target_position_columns": awinda_target_meta.get("position_columns", []),
         "target_angle_columns": awinda_target_meta.get("angle_columns", []),
@@ -683,8 +687,10 @@ def start(args):
             }
         )
 
-    best_ckpt_path = os.path.join(".", "results", "weight", f"best_skeleton_model_{parameters['model_mode']}.pth")
-    final_ckpt_path = os.path.join(".", "results", "weight", f"final_skeleton_model_{parameters['model_mode']}.pth")
+    best_ckpt_name = join_nonempty("best_skeleton_model", abl_tag, parameters["model_mode"])
+    final_ckpt_name = join_nonempty("final_skeleton_model", abl_tag, parameters["model_mode"])
+    best_ckpt_path = os.path.join(".", "results", "weight", f"{best_ckpt_name}.pth")
+    final_ckpt_path = os.path.join(".", "results", "weight", f"{final_ckpt_name}.pth")
 
     if cycle_training_active:
         loss_history = train_mse_with_cycle(
@@ -719,7 +725,7 @@ def start(args):
     os.makedirs(learning_results_dir, exist_ok=True)
     learning_results_path = os.path.join(
         learning_results_dir,
-        f"Learning_results_{parameters['model_mode']}.csv",
+        f"{join_nonempty('Learning_results', abl_tag, parameters['model_mode'])}.csv",
     )
 
     if loss_history:
@@ -756,6 +762,7 @@ def start(args):
             "pressure_dim": int(train_pressure_scaled.shape[1]),
             "imu_dim": int(train_imu_scaled.shape[1]),
             "model_mode": parameters["model_mode"],
+            "abl_id": abl_id,
         },
         **checkpoint_extra,
     }
@@ -786,6 +793,7 @@ def get_parser(add_help=False):
 
     parser.add_argument("--smoothing_sigma", type=float, default=None)
     parser.add_argument("--model_mode", type=str, default=None, choices=["original", "simple_seq2seq", "soleformer"])
+    parser.add_argument("--abl_id", type=str, default=None)
     parser.add_argument("--use_time_feature", type=str, default=None)
     parser.add_argument("--use_gradient_data", type=str, default=None)
     parser.add_argument("--use_cycle_loss", type=str, default=None)

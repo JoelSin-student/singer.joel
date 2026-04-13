@@ -23,7 +23,7 @@ Both can be:
 use_cycle_loss: true
 pretrain_accelnet: true      # Pretrain AccelNet
 pretrain_pressnet: true      # Pretrain PressNet
-pretrain_epochs: 40
+pretrain_epochs: 30          # Sufficient epochs. Increase or decrease in function of pretraining curves
 pretrain_learning_rate: 0.001
 freeze_pretrained_cycle_nets: true  # Freeze after main training starts
 ```
@@ -38,10 +38,10 @@ python train.py \
 ```
 
 **Workflow**:
-1. AccelNet trained for 40 epochs on pose→IMU task (MSE loss)
-   - Saves: `./checkpoints/accelnet_pretrained.pt`
-2. PressNet trained for 40 epochs on pose→pressure task (MSE loss)
-   - Saves: `./checkpoints/pressnet_pretrained.pt`
+1. AccelNet trained for 30 epochs on pose→IMU task (MSE loss)
+   - Saves: `results/pretrained_aux/accelnet_pretrained.pt`
+2. PressNet trained for 30 epochs on pose→pressure task (MSE loss)
+   - Saves: `results/pretrained_aux/pressnet_pretrained.pt`
 3. Main SoleFormer training begins with frozen cycle nets
 4. Final checkpoint includes both accel_net and press_net state dicts
 
@@ -52,16 +52,16 @@ python train.py \
 use_cycle_loss: true
 pretrain_accelnet: false     # Skip pretraining
 pretrain_pressnet: false     # Skip pretraining
-accelnet_pretrained_path: "./checkpoints/accelnet_my_model.pt"
-pressnet_pretrained_path: "./checkpoints/pressnet_my_model.pt"
+accelnet_pretrained_path: "results/pretrained_aux/accelnet_my_model.pt"
+pressnet_pretrained_path: "results/pretrained_aux/pressnet_my_model.pt"
 freeze_pretrained_cycle_nets: true
 ```
 
 **CLI override**:
 ```bash
 python train.py \
-  --accelnet_pretrained_path="./checkpoints/accelnet_my_model.pt" \
-  --pressnet_pretrained_path="./checkpoints/pressnet_my_model.pt"
+  --accelnet_pretrained_path="results/pretrained_aux/accelnet_my_model.pt" \
+  --pressnet_pretrained_path="results/pretrained_aux/pressnet_my_model.pt"
 ```
 
 ### Strategy 3: Joint Training (Trainable Auxiliaries)
@@ -115,7 +115,7 @@ Both use:
 # 1. Read config
 pretrain_accelnet = config["train"].get("pretrain_accelnet", False)
 pretrain_pressnet = config["train"].get("pretrain_pressnet", False)
-pretrain_epochs = config["train"].get("pretrain_epochs", 40)
+pretrain_epochs = config["train"].get("pretrain_epochs", 30)
 pretrain_learning_rate = config["train"].get("pretrain_learning_rate", 0.001)
 
 # 2. Create auxiliary nets
@@ -125,11 +125,11 @@ press_net = PressNet(...)
 # 3. Optionally pretrain (if enabled AND no checkpoint path provided)
 if pretrain_accelnet and not accelnet_pretrained_path:
     pretrain_accelnet(accel_net, train_loader, val_loader, ...)
-    # Auto-saves to ./checkpoints/accelnet_pretrained.pt
+    # Auto-saves to results/pretrained_aux/accelnet_pretrained.pt
 
 if pretrain_pressnet and not pressnet_pretrained_path:
     pretrain_pressnet(press_net, train_loader, val_loader, ...)
-    # Auto-saves to ./checkpoints/pressnet_pretrained.pt
+    # Auto-saves to results/pretrained_aux/pressnet_pretrained.pt
 
 # 4. Load from checkpoint if provided
 if accelnet_pretrained_path:
@@ -194,7 +194,7 @@ Time/epoch: 1m 23s | Total: 1m 23s
 
 2. **Increase pretraining epochs** if auxiliary nets are underfitting:
    - Check val loss plateaus before main training starts
-   - Typical range: 20-50 epochs depending on data size
+   - Typical range: 10-50 epochs depending on data size and complexity
 
 3. **Lower pretrain_learning_rate** if training is noisy:
    - Default 0.001; try 0.0005 for larger datasets

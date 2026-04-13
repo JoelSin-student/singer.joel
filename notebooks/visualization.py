@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from notebooks.loader import load_config
+from notebooks.util import format_ablation_tag, join_nonempty, resolve_ablation_id
 
 
 def _find_xyz_columns(df):
@@ -215,6 +216,9 @@ def start(args=None):
     config = load_config(args, args.config if args else None, args.model if args else None)
     model_mode = str(config['visual'].get('model_mode', 'simple_seq2seq')).lower()
 
+    abl_id = resolve_ablation_id(config, 'visual')
+    abl_tag = format_ablation_tag(abl_id)
+
     file_path_real, file_path_predict = _resolve_files(config, args)
     print(f"Using real skeleton file: {file_path_real}")
     print(f"Using predicted skeleton file: {file_path_predict}")
@@ -358,7 +362,7 @@ def start(args=None):
     if output_dir.suffix:  # Has file extension, so extract parent directory
         output_dir = output_dir.parent
     
-    output_file = output_dir / f'Animation_{input_tag}_{model_mode}.html'
+    output_file = output_dir / f"Animation_{join_nonempty(abl_tag, input_tag, model_mode)}.html"
     os.makedirs(output_dir, exist_ok=True)
     default_fps = max(1, int(round(1000.0 / max(1, play_frame_duration_ms))))
     post_script = f"""
@@ -448,5 +452,6 @@ def get_parser(add_help=False):
     parser.add_argument('--step', type=int, default=None)
     parser.add_argument('--output_html', type=str, default=None)
     parser.add_argument('--play_frame_duration_ms', type=int, default=None, help='Animation speed in ms per frame for the Play button (lower=faster).')
+    parser.add_argument('--abl_id', type=str, default=None, help='Ablation identifier used to prefix generated artifacts')
 
     return parser
