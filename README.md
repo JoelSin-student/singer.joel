@@ -21,9 +21,11 @@ To train the model, predict skeleton joints dimensions from OpenGo data and visu
 
 **PRETRAINING_GUIDE.md**: to understand auxiliaries pretraining for SoleFormer.
 
-**TODO.txt**: next things to do.
+**TODO.txt**: next things to do, in short- and medium- terms.
 
 **Data**: gathers all source data, from raw unprocessed to training and test datasets:
+ - `data/ablation_commands.csv`: information about ablation configurations of SoleFormer
+ - `data/subject_anthropo.txt`: anonymised anthropometric data per subject
  - `data/raw_data/Awinda`: raw data of Awinda IMMU system (full-body no-hands)
  - `data/raw_data/Insoles`: raw data of OpenGo insole sensors
  - `data/clean_data`: preprocessed data of both systems
@@ -40,7 +42,10 @@ To train the model, predict skeleton joints dimensions from OpenGo data and visu
  - `notebooks/train.py`: to train the model with training data
  - `notebooks/predict.py`: to predict joints' positions from test insole data and trained model
  - `notebooks/visualization.py`: code to create an animation comparing ground-truth and predicted skeletons.
- - `notebooks/util.py`: code to print logs information in the terminal
+
+**Sources**
+Conceptually, all the code should be in this file, because we are using source Python files. However, they distinguish themselves by having a "start" function that organizes functions between them, before sending to main.py (model controller), and then being called by the commandlines in main.ipynb. We put only the util.py, defining functions used in main.ipynb for the main pipeline,.
+ - `sources/util.py`: functions for robust path resolving, file names creation, preprocessing calling, robust command running, ablation management
 
 **Report**: R markdown, references and images for HTML project report.
 

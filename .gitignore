@@ -14,3 +14,4 @@
 # Except
 !readme.txt
 !sources\ablation_commands.csv
+.Rproj.user

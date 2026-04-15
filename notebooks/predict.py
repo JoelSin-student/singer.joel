@@ -15,7 +15,7 @@ from notebooks.loader import (
     restructure_insole_data,
 )
 from notebooks.model import SoleFormer, Transformer_Encoder, Transformer_Encoder_Seq2Seq, save_predictions
-from notebooks.util import format_ablation_tag, join_nonempty, resolve_ablation_id
+from sources.util import format_ablation_tag, join_nonempty, resolve_ablation_id
 
 
 def _to_bool(value, default=False):

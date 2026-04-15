@@ -1,5 +1,7 @@
 # Auxiliary Network Pretraining Guide
 
+Only for SoleFormer model mode.
+
 ## Overview
 
 **AccelNet** and **PressNet** are optional auxiliary networks that map skeleton (pose) to IMU (6DoF acceleration/gyro) and foot pressure respectively. They can be pretrained independently before being used as frozen regularizers in the main SoleFormer training loop.
@@ -15,6 +17,8 @@ Both can be:
 3. **Pretrained separately**: Pretrained on pose→auxiliary task, then used as frozen regularizers
 
 ## Pretraining Strategy
+
+Those strategies can be selected in main.ipynb with the different ablation commands, expect for hyperparameters like the number of epochs. Those hyperparameters can be defined by hand in the commandlines, or the notebooks\config\transformer_encoder .yaml files.
 
 ### Strategy 1: Pretrain from Scratch (Recommended for new data)
 

@@ -35,7 +35,7 @@ from notebooks.model import (
     pretrain_accelnet,
     pretrain_pressnet,
 )
-from notebooks.util import format_ablation_tag, join_nonempty, print_config, resolve_ablation_id
+from sources.util import format_ablation_tag, join_nonempty, print_config, resolve_ablation_id
 
 
 def _to_bool(value, default=False):
