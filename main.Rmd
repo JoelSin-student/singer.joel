@@ -9,6 +9,10 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(reshape2)
+library(stringr)
 ```
 
 # Learning analyses
@@ -59,27 +63,821 @@ lc_soleformer
 
 The learning of P2P-Insole and its sequence-to-sequence variant is very poor. On the other hand, SoleFormer shows a standard learning curve, also showing that 40 epochs are not enough for an optimal learning.
 
-# MPJPE
+# Prediction analyses
+
+## Initialization
+
+```{r analyses init, echo=FALSE, warning=FALSE, message=FALSE}
+# Load data
+gt_files <- c(
+  "data/test_data/skeleton/Awinda_001CcSs_3_shadow_test.csv",
+  "data/test_data/skeleton/Awinda_001CcSs_3_shadow_test.csv",
+  "data/clean_data/Awinda_targets_soleformer/AwindaTarget_001CcSs_3_shadow_test.csv"
+)
+
+pred_files <- c(
+  "results/output/Predicted_skeleton_001CcSs_3_shadow_test_original.csv",
+  "results/output/Predicted_skeleton_001CcSs_3_shadow_test_simple_seq2seq.csv",
+  "results/output/Predicted_skeleton_001CcSs_3_shadow_test_soleformer.csv"
+)
+
+# Names of algo for titles
+method_names <- c(
+  "P2P-Insole",
+  "P2P-Insole seq2seq",
+  "SoleFormer"
+)
+
+# Joint definitions
+joint_names <- c(
+  "Pelvis","L5","L3","T12","T8","Neck","Head",
+  "Right Shoulder","Right Upper Arm","Right Forearm","Right Hand",
+  "Left Shoulder","Left Upper Arm","Left Forearm","Left Hand",
+  "Right Upper Leg","Right Lower Leg","Right Foot","Right Toe",
+  "Left Upper Leg","Left Lower Leg","Left Foot","Left Toe"
+)
+
+upper_idx <- 8:15
+lower_idx <- 16:23
+trunk_idx <- 1:7
+
+
+# Frame alignment function
+align_dataframes <- function(gt, pred) {
+
+  has_frame_gt <- "Frame" %in% colnames(gt)
+  has_frame_pred <- "Frame" %in% colnames(pred)
+
+  # Case 1: both have Frame -> align by intersection
+  if (has_frame_gt && has_frame_pred) {
+
+    common_frames <- intersect(gt$Frame, pred$Frame)
+
+    gt <- gt[Frame %in% common_frames]
+    pred <- pred[Frame %in% common_frames]
+
+    # ensure same order
+    setorder(gt, Frame)
+    setorder(pred, Frame)
+
+    return(list(gt=gt, pred=pred))
+  }
+
+  # Case 2: no Frame -> fallback to truncation
+  n <- min(nrow(gt), nrow(pred))
+
+  gt <- gt[1:n]
+  pred <- pred[1:n]
+
+  list(gt=gt, pred=pred)
+}
+
+
+# Col parser handling both formats and ignoring extra cols
+extract_positions <- function(df) {
+  cols <- colnames(df)
+
+  # Case 1: X.0, Y.0...
+  if (any(grepl("^X\\.0$", cols))) {
+    X <- df[, grep("^X\\.", cols), with=FALSE]
+    Y <- df[, grep("^Y\\.", cols), with=FALSE]
+    Z <- df[, grep("^Z\\.", cols), with=FALSE]
+
+  } else {
+    # Case 2: pos::Joint x
+    pos_cols <- grep("^pos::", cols, value=TRUE)
+
+    X <- df[, pos_cols[grepl(" x$", pos_cols)], with=FALSE]
+    Y <- df[, pos_cols[grepl(" y$", pos_cols)], with=FALSE]
+    Z <- df[, pos_cols[grepl(" z$", pos_cols)], with=FALSE]
+  }
+
+  list(X=as.matrix(X), Y=as.matrix(Y), Z=as.matrix(Z))
+}
+
+
+# Shared preparation for each metric
+prepare_pair <- function(gt_path, pred_path) {
+
+  gt <- fread(gt_path)
+  pred <- fread(pred_path)
+
+  aligned <- align_dataframes(gt, pred)
+
+  # Positions
+  gt_pos <- extract_positions(aligned$gt)
+  pred_pos <- extract_positions(aligned$pred)
+
+  # Angles (if present)
+  has_angles <- any(grepl("^ang::", colnames(pred)))
+
+  if (has_angles) {
+    ang <- extract_angles(aligned$gt, aligned$pred)
+  } else {
+    ang <- NULL
+  }
+
+  list(
+    gt_pos = gt_pos,
+    pred_pos = pred_pos,
+    angles = ang
+  )
+}
+```
+
+```{r body parts helper functions, echo=FALSE, warning=FALSE, message=FALSE}
+get_segments <- function(n_joints) {
+  list(
+    full  = 1:n_joints,
+    upper = upper_idx,
+    lower = lower_idx,
+    trunk = trunk_idx
+  )
+}
+
+aggregate_segments <- function(matrix, segments, fun = mean) {
+
+  sapply(segments, function(idx) {
+    fun(matrix[, idx], na.rm=TRUE)
+  })
+}
+```
+
+## Plot functions
+
+```{r heatmap, echo=FALSE, warning=FALSE, message=FALSE}
+# Heatmap
+plot_heatmap <- function(dist_matrix, title, mpjpe, sd_val, metric_name, unit, fill_label) {
+  df <- melt(dist_matrix)
+  colnames(df) <- c("Frame","Joint","Error")
+
+  df$Joint <- factor(df$Joint, labels=joint_names)
+
+  ggplot(df, aes(Frame, Joint, fill=Error)) +
+    geom_tile() +
+    scale_fill_gradient(low="green", high="red", name=fill_label) +
+    ggtitle(title) +
+    annotate("text",
+             x = Inf, y = Inf,
+             label = sprintf("%s: %.2f ± %.2f %s", metric_name, mpjpe, sd_val, unit),
+             hjust = 1.1, vjust = 1.5) +
+    theme_minimal()
+}
+```
+
+```{r ranking joints, echo=FALSE, warning=FALSE, message=FALSE}
+# Histogram of mean position error for each joint
+plot_joint_ranking_metric <- function(values, title,
+                              y_label = "Metric (unit)") {
+
+  df <- data.frame(
+    Joint = joint_names,
+    Value = values
+  )
+  
+  # sort descendingly
+  df <- df[order(-df$Value), ]
+  df$Joint <- factor(df$Joint, levels=df$Joint)
+
+  ggplot(df, aes(x=Joint, y=Value)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    coord_flip() +
+    ggtitle(title) +
+    ylab(y_label) +
+    theme_minimal()
+}
+```
+
+
+```{r histogram, echo=FALSE, warning=FALSE, message=FALSE}
+# Histogram for body parts
+plot_segment_metric <- function(values, title,
+                                y_label = "Metric (unit)") {
+
+  df <- data.frame(
+    Segment = c("Full Body", "Upper Limb", "Lower Limb", "Trunk"),
+    Value = values
+  )
+
+  ggplot(df, aes(x=Segment, y=Value, fill=Segment)) +
+    geom_bar(stat="identity", width=0.6) +
+    ggtitle(title) +
+    ylab(y_label) +
+    theme_minimal() +
+    theme(legend.position="none")
+}
+```
+
+
+
+## Frame-wise pose estimation metrics
+
+These metrics are founded on differences frame-by-frame and joint-by-joint between the predicted and the ground-truth poses. They are the most intuitive and commonly used metrics in pose estimation, as they directly measure the accuracy of the predicted joint positions compared to the ground-truth. They can be computed for each joint and each frame, allowing for detailed analyses of where and when the model performs well or poorly.
+
+
+
+### MPJPE
 
 Mean Per Joint Position Error (MPJPE) is an intuitive measure of correspondance between a ground-truth and a prediction. It is the mean euclidean distance between the predicted and the ground-truth 3D joint positions, averaged across all joints and all frames. The lower the MPJPE, the better the model's performance in predicting accurate 3D poses.
 
-```{r mpjpe, echo=FALSE, warning=FALSE, message=FALSE}
+```{r mpjpe comput, echo=FALSE, warning=FALSE, message=FALSE}
+# MPJPE
+compute_mpjpe <- function(gt, pred) {
+  dx <- pred$X - gt$X
+  dy <- pred$Y - gt$Y
+  dz <- pred$Z - gt$Z
 
+  dist <- sqrt(dx^2 + dy^2 + dz^2)
+
+  list(
+    per_joint = colMeans(dist, na.rm=TRUE),
+    per_frame = rowMeans(dist, na.rm=TRUE),
+    full = mean(dist, na.rm=TRUE),
+    sd = sd(dist, na.rm=TRUE),
+    matrix = dist
+  )
+}
+```
+
+
+```{r mpjpe main loop, echo=FALSE, warning=FALSE, message=FALSE}
+# Main MPJPE processing loop
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  res <- compute_mpjpe(data$gt_pos, data$pred_pos)
+
+  print(plot_heatmap(res$matrix,
+                    paste("Temporal Position Error Heatmap -", method),
+                    res$full, res$sd,
+                    metric_name = "MPJPE",
+                    unit = "m",
+                    fill_label = "Error (m)"))
+
+  segments <- get_segments(ncol(res$matrix))
+  res_segments <- aggregate_segments(res$matrix, segments)
+
+  print(plot_segment_metric(res_segments,
+                            paste("Body Part MPJPE -", method),
+                            y_label = "MPJPE (m)"))
+
+  print(plot_joint_ranking_metric(res$per_joint,
+                          paste("Joint 3D Position Error Ranking -", ... = method),
+                          y_label = "MPJPE (m)"))
+}
+```
+
+### PA-MPJPE
+Procrustes Aligned Mean Per Joint Position Error (PA-MPJPE) is a measure of the average distance between the predicted and ground-truth joint positions after aligning them using Procrustes analysis. This alignment removes differences in scale, rotation, and translation, allowing for a more accurate assessment of the pose estimation performance. The lower the PA-MPJPE, the better the model's performance in predicting accurate 3D poses.
+
+```{r pa-mpjpe comput, echo=FALSE, warning=FALSE, message=FALSE}
+# PA-MPJPE computation
+compute_pa_mpjpe <- function(gt, pred) {
+
+  n_frames <- nrow(gt$X)
+  n_joints <- ncol(gt$X)
+
+  dist <- matrix(NA, nrow=n_frames, ncol=n_joints)
+
+  for (f in 1:n_frames) {
+
+    # build 3D matrices (J x 3)
+    G <- cbind(gt$X[f,], gt$Y[f,], gt$Z[f,])
+    P <- cbind(pred$X[f,], pred$Y[f,], pred$Z[f,])
+
+    # center
+    Gc <- scale(G, center=TRUE, scale=FALSE)
+    Pc <- scale(P, center=TRUE, scale=FALSE)
+
+    # SVD for optimal rotation
+    H <- t(Pc) %*% Gc
+    svd_res <- svd(H)
+    R <- svd_res$v %*% t(svd_res$u)
+
+    # reflection correction
+    if (det(R) < 0) {
+      svd_res$v[,3] <- -svd_res$v[,3]
+      R <- svd_res$v %*% t(svd_res$u)
+    }
+
+    # align
+    P_aligned <- Pc %*% R
+
+    # compute distances
+    d <- sqrt(rowSums((P_aligned - Gc)^2))
+    dist[f, ] <- d
+  }
+
+  list(
+    per_joint = colMeans(dist, na.rm=TRUE),
+    per_frame = rowMeans(dist, na.rm=TRUE),
+    full = mean(dist, na.rm=TRUE),
+    sd = sd(dist, na.rm=TRUE),
+    matrix = dist
+  )
+}
+```
+
+
+```{r pa-mpjpe main loop, echo=FALSE, warning=FALSE, message=FALSE}
+# Main processing loop for PA-MPJPE
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  res <- compute_pa_mpjpe(data$gt_pos, data$pred_pos)
+
+  print(plot_heatmap(res$matrix,
+                     paste("Temporal Procrustes-Aligned Position Error Heatmap -", method),
+                     res$full, res$sd,
+                     fill_label = "Error (m)",
+                     metric_name = "PA-MPJPE",
+                     unit = "m"))
+
+  segments <- get_segments(ncol(res$matrix))
+  res_segments <- aggregate_segments(res$matrix, segments)
+
+  print(plot_segment_metric(res_segments,
+                            paste("Body Part PA-MPJPE -", method),
+                            y_label = "PA-MPJPE (m)"))
+
+  print(plot_joint_ranking_metric(res$per_joint,
+                          paste("Joint PA-JPE Ranking -", method),
+                          y_label = "PA-MPJPE (m)"))
+}
+```
+
+### MAJAE
+Mean Absolute Joint Angle Error (MAJAE) is a measure of the average absolute difference in joint angles between the predicted and ground-truth poses. It is calculated by directly computing the difference between SoleFormer input and output joint angles, that are already taken from the Awinda data and computed by the SoleFormer pipeline.
+
+```{r majae comp, echo=FALSE, warning=FALSE, message=FALSE}
+# Different col name handling
+normalize_names <- function(x) {
+  x <- trimws(x)
+  x <- gsub("\\s+", " ", x)
+  x <- tolower(x)
+  x
+}
+
+# Angle extractor for the SoleFormer output
+extract_angles <- function(gt, pred) {
+
+  gt_cols <- grep("^ang::", colnames(gt), value=TRUE)
+  pred_cols <- grep("^ang::", colnames(pred), value=TRUE)
+
+  # REMOVE WRIST COLUMNS (case-insensitive)
+  gt_cols <- gt_cols[!grepl("wrist", gt_cols, ignore.case=TRUE)]
+  pred_cols <- pred_cols[!grepl("wrist", pred_cols, ignore.case=TRUE)]
+
+  gt_norm <- normalize_names(gt_cols)
+  pred_norm <- normalize_names(pred_cols)
+
+  common_norm <- intersect(gt_norm, pred_norm)
+
+  if (length(common_norm) == 0) {
+    stop("No common angle columns found after filtering and normalization")
+  }
+
+  gt_match_idx <- match(common_norm, gt_norm)
+  pred_match_idx <- match(common_norm, pred_norm)
+
+  gt_sel <- gt_cols[gt_match_idx]
+  pred_sel <- pred_cols[pred_match_idx]
+
+  gt_mat <- as.matrix(gt[, ..gt_sel])
+  pred_mat <- as.matrix(pred[, ..pred_sel])
+
+  list(
+    gt = gt_mat,
+    pred = pred_mat,
+    names = gt_sel
+  )
+}
+
+# Name cleaner
+clean_angle_names <- function(names) {
+  names <- gsub("^ang::", "", names)
+  names <- gsub(" +", " ", names)
+  names
+}
+
+# MAJAE computation
+compute_majae <- function(gt_ang, pred_ang) {
+  diff <- abs(pred_ang - gt_ang)
+
+  list(
+    mean = mean(diff, na.rm=TRUE),
+    sd = sd(diff, na.rm=TRUE),
+    matrix = diff
+  )
+}
+```
+
+
+```{r joints ang ranking, echo=FALSE, warning=FALSE, message=FALSE}
+# Histogram of mean angle error for each joint
+plot_angle_ranking <- function(angle_matrix, angle_names, title) {
+
+  angle_majae <- colMeans(angle_matrix, na.rm=TRUE)
+
+  df <- data.frame(
+    Angle = angle_names,
+    MAJAE = angle_majae
+  )
+
+  df <- df[order(-df$MAJAE), ]
+  df$Angle <- factor(df$Angle, levels=df$Angle)
+
+  ggplot(df, aes(x=Angle, y=MAJAE)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    coord_flip() +
+    ggtitle(title) +
+    ylab("MAJAE (degrees)") +
+    xlab("Joint Angle") +
+    theme_minimal()
+}
+```
+
+
+```{r body segments ang, echo=FALSE, warning=FALSE, message=FALSE}
+# Group angles by body part based on their names
+get_angle_groups <- function(angle_names) {
+
+  upper <- grepl("Shoulder|Elbow", angle_names, ignore.case=TRUE)
+  lower <- grepl("Hip|Knee|Ankle|Foot", angle_names, ignore.case=TRUE)
+  trunk <- grepl("L5S1|L4L3|L1T12|T9T8|T1C7|C1 Head", angle_names, ignore.case=TRUE)
+
+  list(
+    upper = upper,
+    lower = lower,
+    trunk = trunk,
+    full  = rep(TRUE, length(angle_names))
+  )
+}
+
+# Plot MAJAE for body segments
+plot_angle_segments <- function(angle_matrix, angle_names, title) {
+
+  groups <- get_angle_groups(angle_names)
+
+  majae_full  <- mean(angle_matrix[, groups$full],  na.rm=TRUE)
+  majae_upper <- mean(angle_matrix[, groups$upper], na.rm=TRUE)
+  majae_lower <- mean(angle_matrix[, groups$lower], na.rm=TRUE)
+  majae_trunk <- mean(angle_matrix[, groups$trunk], na.rm=TRUE)
+
+  df <- data.frame(
+    Segment = c("Full Body", "Upper Limb", "Lower Limb", "Trunk"),
+    MAJAE = c(majae_full, majae_upper, majae_lower, majae_trunk)
+  )
+
+  ggplot(df, aes(x=Segment, y=MAJAE, fill=Segment)) +
+    geom_bar(stat="identity", width=0.6) +
+    ggtitle(title) +
+    ylab("MAJAE (degrees)") +
+    theme_minimal() +
+    theme(legend.position="none")
+}
+```
+
+
+```{r ang main loop, echo=FALSE, warning=FALSE, message=FALSE}
+# Main MAJAE processing loop
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  if (!is.null(data$angles)) {
+
+    ang <- data$angles
+
+    res_ang <- compute_majae(ang$gt, ang$pred)
+
+    # Histogram (distribution)
+    df <- melt(res_ang$matrix)
+
+    p <- ggplot(df, aes(value)) +
+      geom_histogram(bins=50, fill="blue", alpha=0.6) +
+      ggtitle(paste("Angle Error Distribution -", method)) +
+      annotate("text",
+               x = Inf, y = Inf,
+               label = sprintf("MAJAE: %.2f ± %.2f degrees",
+                               res_ang$mean, res_ang$sd),
+               hjust = 1.1, vjust = 1.5) +
+      theme_minimal()
+
+    print(p)
+
+    # Ranking
+    print(plot_angle_ranking(res_ang$matrix,
+                             clean_angle_names(ang$names),
+                             paste("Joint Angle Error Ranking -", method)))
+
+    # Segment-level (same philosophy as MPJPE)
+    print(plot_angle_segments(res_ang$matrix,
+                              clean_angle_names(ang$names),
+                              paste("Body Part MAJAE -", method)))
+  }
+}
+```
+
+### MPJVE
+Mean Per Joint Velocity Error (MPJVE) is a measure of smoothness and temporal consistency in pose estimation. It is calculated by first computing the velocity of each joint in both the predicted and ground-truth poses (i.e., the change in joint position between consecutive frames) and then taking the mean of the absolute differences in these velocities across all joints and frames. A lower MPJVE indicates that the model is better at capturing the dynamic aspects of motion, producing smoother and more realistic pose estimations over time.
+
+```{r velocity, echo=FALSE, warning=FALSE, message=FALSE}
+# Velocity computation
+compute_velocity <- function(pos, fps = 60) {
+
+  list(
+    X = (pos$X[-1, ] - pos$X[-nrow(pos$X), ]) * fps,
+    Y = (pos$Y[-1, ] - pos$Y[-nrow(pos$Y), ]) * fps,
+    Z = (pos$Z[-1, ] - pos$Z[-nrow(pos$Z), ]) * fps
+  )
+}
+```
+
+
+```{r mpjve, echo=FALSE, warning=FALSE, message=FALSE}
+
+compute_mpjve <- function(gt, pred) {
+
+  gt_v <- compute_velocity(gt)
+  pred_v <- compute_velocity(pred)
+
+  compute_mpjpe(gt_v, pred_v)
+}
+```
+
+
+```{r main mpjve loop, echo=FALSE, warning=FALSE, message=FALSE}
+# Main processing loop for MPJVE
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  res <- compute_mpjve(data$gt_pos, data$pred_pos)
+
+  print(plot_heatmap(res$matrix,
+                     paste("Temporal Velocity Error Heatmap -", method),
+                     res$full, res$sd,
+                     fill_label = "Error (m/s)",
+                     metric_name = "MPJVE",
+                     unit = "m/s"))
+
+  segments <- get_segments(ncol(res$matrix))
+  res_segments <- aggregate_segments(res$matrix, segments)
+
+  print(plot_segment_metric(res_segments,
+                            paste("Body Part MPJVE -", method),
+                            y_label = "MPJVE (m/s)"))
+
+  print(plot_joint_ranking_metric(res$per_joint,
+                          paste("Joint 3D Velocity Error Ranking -", method),
+                          y_label = "MPJVE (m/s)"))
+}
 ```
 
 
 
 
+## Pose estimation realism metrics
+
+These metrics are founded on the analysis of the predicted and ground-truth motions as a whole, rather than on frame-by-frame differences. They capture the overall quality of the motion, its "realism". Indeed, static metrics like MPJPE can be low even if the predicted motion is not realistic, for example if the model is just predicting an average pose. On the other hand, metrics like velocity correlation and motion energy ratio can capture whether the predicted motion has similar dynamics and energy to the ground-truth. This is crucial to distinguish algorithms not learning dynamically from those that can have bad static results (because of the complexity of the movement) but that are learning a dynamic mapping and thus can produce more realistic motions.
 
 
+### Motion Energy Ratio
+Motion Energy Ratio (MER) is a measure of how well the predicted motion captures the overall energy of the ground-truth motion: meaning the amplitude of movements. As for velocity correlation, it focuses on the motion itself instead of mere differences. 
+
+```{r mot ener comput, echo=FALSE, warning=FALSE, message=FALSE}
+# Motion energy computation
+compute_motion_energy <- function(pos) {
+  v <- compute_velocity(pos)
+  mean(v$X^2 + v$Y^2 + v$Z^2, na.rm=TRUE)
+}
+
+compute_motion_energy_ratio <- function(gt, pred) {
+
+  e_gt <- compute_motion_energy(gt)
+  e_pred <- compute_motion_energy(pred)
+
+  ratio <- e_pred / e_gt
+
+  list(
+    gt = e_gt,
+    pred = e_pred,
+    ratio = ratio
+  )
+}
+```
+
+```{r mot ener plot, echo=FALSE, warning=FALSE, message=FALSE}
+# Motion energy plot
+plot_motion_energy <- function(res, title) {
+
+  df <- data.frame(
+    Type = c("Ground Truth", "Prediction"),
+    Energy = c(res$gt, res$pred)
+  )
+
+  ggplot(df, aes(x=Type, y=Energy, fill=Type)) +
+    geom_bar(stat="identity", width=0.6) +
+    ggtitle(paste(title, sprintf("(Ratio = %.2f)", res$ratio))) +
+    ylab("Motion Energy (m²/s²") +
+    theme_minimal() +
+    theme(legend.position="none")
+}
+```
+
+```{r mot ener main loop, echo=FALSE, warning=FALSE, message=FALSE}
+# Main motion energy loop
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  res_energy <- compute_motion_energy_ratio(data$gt_pos, data$pred_pos)
+
+  print(plot_motion_energy(res_energy,
+                           paste("Motion Energy -", method)))
+}
+```
 
 
+### Velocity Correlation
+Velocity Correlation (VC) is a measure of how well the predicted joint velocities match the ground-truth joint velocities. It goes one step further than computing the raw differences in velocity (MPJVE) by correlating time-series. It captures the temporal dynamics and patterns of movement rather than just the magnitude of errors.
+
+```{r v corr comput, echo=FALSE, warning=FALSE, message=FALSE}
+# Velocity correlation computation
+compute_velocity_correlation <- function(gt, pred) {
+
+  gt_v <- compute_velocity(gt)
+  pred_v <- compute_velocity(pred)
+
+  n_joints <- ncol(gt_v$X)
+  corrs <- rep(NA, n_joints)
+
+  for (j in 1:n_joints) {
+
+    v_gt <- c(gt_v$X[,j], gt_v$Y[,j], gt_v$Z[,j])
+    v_pr <- c(pred_v$X[,j], pred_v$Y[,j], pred_v$Z[,j])
+
+    if (sd(v_gt) > 0 && sd(v_pr) > 0) {
+      corrs[j] <- cor(v_gt, v_pr)
+    }
+  }
+
+  list(
+    per_joint = corrs,
+    mean = mean(corrs, na.rm=TRUE)
+  )
+}
+```
+
+```{r v corr plot, echo=FALSE, warning=FALSE, message=FALSE}
+# Velocity correlation plot
+plot_velocity_correlation <- function(corrs, title) {
+
+  df <- data.frame(
+    Joint = joint_names,
+    Correlation = corrs
+  )
+
+  df <- df[order(-df$Correlation), ]
+  df$Joint <- factor(df$Joint, levels=df$Joint)
+
+  ggplot(df, aes(x=Joint, y=Correlation)) +
+    geom_bar(stat="identity", fill="darkgreen") +
+    coord_flip() +
+    ggtitle(title) +
+    ylab("Velocity Correlation") +
+    ylim(-1, 1) +
+    theme_minimal()
+}
+```
+
+```{r v corr main loop, echo=FALSE, warning=FALSE, message=FALSE}
+# Main velocity correlation loop
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  res_corr <- compute_velocity_correlation(data$gt_pos, data$pred_pos)
+
+  print(plot_velocity_correlation(res_corr$per_joint,
+                                  paste("Velocity Correlation -", method)))
+
+  cat("Mean velocity correlation:", res_corr$mean, "\n")
+}
+```
 
 
+## Summary table
+
+This table displays the 6 metrics for each model and for each body part, allowing for a quick comparison of their performance across different aspects of pose estimation quality, and for the identification of difficult body segments to be predicted.
 
 
+```{r summary table, echo=FALSE, warning=FALSE, message=FALSE}
+# Table builder
+build_summary_table <- function(gt_files, pred_files, method_names) {
+
+  results_list <- list()
+
+  for (i in seq_along(gt_files)) {
+
+    data <- prepare_pair(gt_files[i], pred_files[i])
+    method <- method_names[i]
+
+    seg <- get_segments(ncol(data$gt_pos$X))
+
+    # --- Metrics ---
+    mpjpe  <- compute_mpjpe(data$gt_pos, data$pred_pos)
+    pa     <- compute_pa_mpjpe(data$gt_pos, data$pred_pos)
+    mpjve  <- compute_mpjve(data$gt_pos, data$pred_pos)
+    corr   <- compute_velocity_correlation(data$gt_pos, data$pred_pos)
+    energy <- compute_motion_energy_ratio(data$gt_pos, data$pred_pos)
+
+    # --- Segment aggregation ---
+    mpjpe_s <- aggregate_segments(mpjpe$matrix, seg)
+    pa_s    <- aggregate_segments(pa$matrix, seg)
+    mpjve_s <- aggregate_segments(mpjve$matrix, seg)
+
+    # correlation per segment
+    corr_s <- sapply(seg, function(idx) {
+      mean(corr$per_joint[idx], na.rm=TRUE)
+    })
+
+    # energy ratio is global → repeat
+    energy_s <- rep(energy$ratio, length(seg))
+    names(energy_s) <- names(seg)
+
+    # --- Angles (if available) ---
+    if (!is.null(data$angles)) {
+
+      ang <- data$angles
+      majae <- compute_majae(ang$gt, ang$pred)
+
+      angle_names <- clean_angle_names(ang$names)
+      groups <- get_angle_groups(angle_names)
+
+      majae_s <- c(
+        full  = mean(majae$matrix, na.rm=TRUE),
+        upper = mean(majae$matrix[, groups$upper], na.rm=TRUE),
+        lower = mean(majae$matrix[, groups$lower], na.rm=TRUE),
+        trunk = mean(majae$matrix[, groups$trunk], na.rm=TRUE)
+      )
+
+    } else {
+      majae_s <- rep(NA, 4)
+      names(majae_s) <- names(seg)
+    }
+
+    # --- Combine into one row ---
+    row <- c()
+
+    for (part in names(seg)) {
+
+      row <- c(row,
+               mpjpe_s[part],
+               pa_s[part],
+               mpjve_s[part],
+               corr_s[part],
+               energy_s[part],
+               majae_s[part])
+    }
+
+    results_list[[method]] <- row
+  }
+
+  # --- Column names ---
+  metrics <- c("MPJPE (m)","PA-MPJPE (m)","MPJVE (m/s)","VelCorr","Energy (m²/s²)","MAJAE (deg)")
+  parts <- c("Full","Upper","Lower","Trunk")
+
+  col_names <- c()
+  for (p in parts) {
+    for (m in metrics) {
+      col_names <- c(col_names, paste(p, m, sep="_"))
+    }
+  }
+
+  df <- as.data.frame(do.call(rbind, results_list))
+  colnames(df) <- col_names
+  df$Method <- rownames(df)
+  rownames(df) <- NULL
+
+  df[, c("Method", col_names)]
+}
 
 
+# Display the summary table
+summary_df <- build_summary_table(gt_files, pred_files, method_names)
+
+print(summary_df)
+```
 
 
 
