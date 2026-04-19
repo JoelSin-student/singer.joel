@@ -13,6 +13,9 @@ library(data.table)
 library(ggplot2)
 library(reshape2)
 library(stringr)
+library(gridExtra)
+library(grid)
+library(gtable)
 ```
 
 # Learning analyses
@@ -185,6 +188,59 @@ prepare_pair <- function(gt_path, pred_path) {
 }
 ```
 
+```{r ang helper functions, echo=FALSE, warning=FALSE, message=FALSE}
+# Different col name handling
+normalize_names <- function(x) {
+  x <- trimws(x)
+  x <- gsub("\\s+", " ", x)
+  x <- tolower(x)
+  x
+}
+
+# Angle extractor for the SoleFormer output
+extract_angles <- function(gt, pred) {
+
+  gt_cols <- grep("^ang::", colnames(gt), value=TRUE)
+  pred_cols <- grep("^ang::", colnames(pred), value=TRUE)
+
+  # REMOVE WRIST COLUMNS (case-insensitive)
+  gt_cols <- gt_cols[!grepl("wrist", gt_cols, ignore.case=TRUE)]
+  pred_cols <- pred_cols[!grepl("wrist", pred_cols, ignore.case=TRUE)]
+
+  gt_norm <- normalize_names(gt_cols)
+  pred_norm <- normalize_names(pred_cols)
+
+  common_norm <- intersect(gt_norm, pred_norm)
+
+  if (length(common_norm) == 0) {
+    stop("No common angle columns found after filtering and normalization")
+  }
+
+  gt_match_idx <- match(common_norm, gt_norm)
+  pred_match_idx <- match(common_norm, pred_norm)
+
+  gt_sel <- gt_cols[gt_match_idx]
+  pred_sel <- pred_cols[pred_match_idx]
+
+  gt_mat <- as.matrix(gt[, ..gt_sel])
+  pred_mat <- as.matrix(pred[, ..pred_sel])
+
+  list(
+    gt = gt_mat,
+    pred = pred_mat,
+    names = gt_sel
+  )
+}
+
+# Name cleaner
+clean_angle_names <- function(names) {
+  names <- gsub("^ang::", "", names)
+  names <- gsub(" +", " ", names)
+  names
+}
+```
+
+
 ```{r body parts helper functions, echo=FALSE, warning=FALSE, message=FALSE}
 get_segments <- function(n_joints) {
   list(
@@ -269,7 +325,6 @@ plot_segment_metric <- function(values, title,
 ```
 
 
-
 ## Frame-wise pose estimation metrics
 
 These metrics are founded on differences frame-by-frame and joint-by-joint between the predicted and the ground-truth poses. They are the most intuitive and commonly used metrics in pose estimation, as they directly measure the accuracy of the predicted joint positions compared to the ground-truth. They can be computed for each joint and each frame, allowing for detailed analyses of where and when the model performs well or poorly.
@@ -325,7 +380,7 @@ for (i in seq_along(gt_files)) {
 
   print(plot_joint_ranking_metric(res$per_joint,
                           paste("Joint 3D Position Error Ranking -", ... = method),
-                          y_label = "MPJPE (m)"))
+                          y_label = "Mean Position Error (m)"))
 }
 ```
 
@@ -406,7 +461,7 @@ for (i in seq_along(gt_files)) {
 
   print(plot_joint_ranking_metric(res$per_joint,
                           paste("Joint PA-JPE Ranking -", method),
-                          y_label = "PA-MPJPE (m)"))
+                          y_label = "Mean Procrustes-Aligned Position Error (m)"))
 }
 ```
 
@@ -414,56 +469,6 @@ for (i in seq_along(gt_files)) {
 Mean Absolute Joint Angle Error (MAJAE) is a measure of the average absolute difference in joint angles between the predicted and ground-truth poses. It is calculated by directly computing the difference between SoleFormer input and output joint angles, that are already taken from the Awinda data and computed by the SoleFormer pipeline.
 
 ```{r majae comp, echo=FALSE, warning=FALSE, message=FALSE}
-# Different col name handling
-normalize_names <- function(x) {
-  x <- trimws(x)
-  x <- gsub("\\s+", " ", x)
-  x <- tolower(x)
-  x
-}
-
-# Angle extractor for the SoleFormer output
-extract_angles <- function(gt, pred) {
-
-  gt_cols <- grep("^ang::", colnames(gt), value=TRUE)
-  pred_cols <- grep("^ang::", colnames(pred), value=TRUE)
-
-  # REMOVE WRIST COLUMNS (case-insensitive)
-  gt_cols <- gt_cols[!grepl("wrist", gt_cols, ignore.case=TRUE)]
-  pred_cols <- pred_cols[!grepl("wrist", pred_cols, ignore.case=TRUE)]
-
-  gt_norm <- normalize_names(gt_cols)
-  pred_norm <- normalize_names(pred_cols)
-
-  common_norm <- intersect(gt_norm, pred_norm)
-
-  if (length(common_norm) == 0) {
-    stop("No common angle columns found after filtering and normalization")
-  }
-
-  gt_match_idx <- match(common_norm, gt_norm)
-  pred_match_idx <- match(common_norm, pred_norm)
-
-  gt_sel <- gt_cols[gt_match_idx]
-  pred_sel <- pred_cols[pred_match_idx]
-
-  gt_mat <- as.matrix(gt[, ..gt_sel])
-  pred_mat <- as.matrix(pred[, ..pred_sel])
-
-  list(
-    gt = gt_mat,
-    pred = pred_mat,
-    names = gt_sel
-  )
-}
-
-# Name cleaner
-clean_angle_names <- function(names) {
-  names <- gsub("^ang::", "", names)
-  names <- gsub(" +", " ", names)
-  names
-}
-
 # MAJAE computation
 compute_majae <- function(gt_ang, pred_ang) {
   diff <- abs(pred_ang - gt_ang)
@@ -495,7 +500,7 @@ plot_angle_ranking <- function(angle_matrix, angle_names, title) {
     geom_bar(stat="identity", fill="steelblue") +
     coord_flip() +
     ggtitle(title) +
-    ylab("MAJAE (degrees)") +
+    ylab("Mean Angle Error (degrees)") +
     xlab("Joint Angle") +
     theme_minimal()
 }
@@ -637,7 +642,7 @@ for (i in seq_along(gt_files)) {
 
   print(plot_joint_ranking_metric(res$per_joint,
                           paste("Joint 3D Velocity Error Ranking -", method),
-                          y_label = "MPJVE (m/s)"))
+                          y_label = "Mean Velocity Error (m/s)"))
 }
 ```
 
@@ -655,23 +660,46 @@ Motion Energy Ratio (MER) is a measure of how well the predicted motion captures
 ```{r mot ener comput, echo=FALSE, warning=FALSE, message=FALSE}
 # Motion energy computation
 compute_motion_energy <- function(pos) {
+
   v <- compute_velocity(pos)
-  mean(v$X^2 + v$Y^2 + v$Z^2, na.rm=TRUE)
+
+  # Per-joint energy
+  energy_per_joint <- colMeans(
+    v$X^2 + v$Y^2 + v$Z^2,
+    na.rm = TRUE
+  )
+
+  # Full-body energy (scalar)
+  energy_full <- mean(energy_per_joint, na.rm=TRUE)
+
+  list(
+    per_joint = energy_per_joint,
+    full = energy_full
+  )
 }
 
+# Energy ratio per joint
 compute_motion_energy_ratio <- function(gt, pred) {
 
   e_gt <- compute_motion_energy(gt)
   e_pred <- compute_motion_energy(pred)
 
-  ratio <- e_pred / e_gt
+  ratio_per_joint <- e_pred$per_joint / e_gt$per_joint
+  ratio_per_joint[!is.finite(ratio_per_joint)] <- NA
+
+  ratio_full <- e_pred$full / e_gt$full
 
   list(
     gt = e_gt,
     pred = e_pred,
-    ratio = ratio
+    ratio = list(
+      per_joint = ratio_per_joint,
+      full = ratio_full
+    )
   )
 }
+
+
 ```
 
 ```{r mot ener plot, echo=FALSE, warning=FALSE, message=FALSE}
@@ -680,15 +708,38 @@ plot_motion_energy <- function(res, title) {
 
   df <- data.frame(
     Type = c("Ground Truth", "Prediction"),
-    Energy = c(res$gt, res$pred)
+    Energy = c(res$gt$full, res$pred$full)
   )
 
   ggplot(df, aes(x=Type, y=Energy, fill=Type)) +
     geom_bar(stat="identity", width=0.6) +
-    ggtitle(paste(title, sprintf("(Ratio = %.2f)", res$ratio))) +
-    ylab("Motion Energy (m²/s²") +
+    ggtitle(paste(title, sprintf("(Ratio = %.2f)", res$ratio$full))) +
+    ylab("Motion Energy (m²/s²)") +
     theme_minimal() +
     theme(legend.position="none")
+}
+
+
+
+# Aggregation of energy by body segments
+compute_energy_segments <- function(res) {
+
+  segments <- get_segments(length(res$gt$per_joint))
+
+  gt_seg <- sapply(segments, function(idx)
+    mean(res$gt$per_joint[idx], na.rm=TRUE))
+
+  pred_seg <- sapply(segments, function(idx)
+    mean(res$pred$per_joint[idx], na.rm=TRUE))
+
+  ratio_seg <- sapply(segments, function(idx)
+    mean(res$ratio$per_joint[idx], na.rm=TRUE))
+
+  list(
+    gt = gt_seg,
+    pred = pred_seg,
+    ratio = ratio_seg
+  )
 }
 ```
 
@@ -701,8 +752,14 @@ for (i in seq_along(gt_files)) {
 
   res_energy <- compute_motion_energy_ratio(data$gt_pos, data$pred_pos)
 
+  # Plot (full-body only)
   print(plot_motion_energy(res_energy,
-                           paste("Motion Energy -", method)))
+                          paste("Motion Energy -", method)))
+
+  # Segment values (for table later)
+  res_energy_seg <- compute_energy_segments(res_energy)
+
+  # -> store this in summary_df later
 }
 ```
 
@@ -776,14 +833,29 @@ for (i in seq_along(gt_files)) {
 ```
 
 
-## Summary table
+## Summary tables
 
-This table displays the 6 metrics for each model and for each body part, allowing for a quick comparison of their performance across different aspects of pose estimation quality, and for the identification of difficult body segments to be predicted.
+These tables displays the 6 metrics for each model and for each body part, allowing for a quick comparison of their performance across different aspects of pose estimation quality, and for the identification of difficult body segments to be predicted.
 
+### Console display
 
 ```{r summary table, echo=FALSE, warning=FALSE, message=FALSE}
+# Precompute energy segments for all methods to use in the summary table
+energy_segments_list <- list()
+
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+
+  res_energy <- compute_motion_energy_ratio(data$gt_pos, data$pred_pos)
+  res_energy_seg <- compute_energy_segments(res_energy)
+
+  energy_segments_list[[method]] <- res_energy_seg$ratio
+}
+
 # Table builder
-build_summary_table <- function(gt_files, pred_files, method_names) {
+build_summary_table <- function(gt_files, pred_files, method_names, energy_segments_list) {
 
   results_list <- list()
 
@@ -799,7 +871,6 @@ build_summary_table <- function(gt_files, pred_files, method_names) {
     pa     <- compute_pa_mpjpe(data$gt_pos, data$pred_pos)
     mpjve  <- compute_mpjve(data$gt_pos, data$pred_pos)
     corr   <- compute_velocity_correlation(data$gt_pos, data$pred_pos)
-    energy <- compute_motion_energy_ratio(data$gt_pos, data$pred_pos)
 
     # --- Segment aggregation ---
     mpjpe_s <- aggregate_segments(mpjpe$matrix, seg)
@@ -811,9 +882,8 @@ build_summary_table <- function(gt_files, pred_files, method_names) {
       mean(corr$per_joint[idx], na.rm=TRUE)
     })
 
-    # energy ratio is global → repeat
-    energy_s <- rep(energy$ratio, length(seg))
-    names(energy_s) <- names(seg)
+    # energy ratio (per segment)
+    energy_s <- energy_segments_list[[method]]
 
     # --- Angles (if available) ---
     if (!is.null(data$angles)) {
@@ -854,7 +924,7 @@ build_summary_table <- function(gt_files, pred_files, method_names) {
   }
 
   # --- Column names ---
-  metrics <- c("MPJPE (m)","PA-MPJPE (m)","MPJVE (m/s)","VelCorr","Energy (m²/s²)","MAJAE (deg)")
+  metrics <- c("MPJPE (m)","PA-MPJPE (m)","MPJVE (m/s)","VelCorr","Energy Ratio","MAJAE (deg)")
   parts <- c("Full","Upper","Lower","Trunk")
 
   col_names <- c()
@@ -874,10 +944,126 @@ build_summary_table <- function(gt_files, pred_files, method_names) {
 
 
 # Display the summary table
-summary_df <- build_summary_table(gt_files, pred_files, method_names)
+summary_df <- build_summary_table(
+  gt_files,
+  pred_files,
+  method_names,
+  energy_segments_list
+)
 
 print(summary_df)
+
+colnames(summary_df)
 ```
+
+
+### Article-like 
+
+```{r select header, echo=FALSE, warning=FALSE, message=FALSE}
+# Select the cols from summary_df
+prepare_article_table <- function(df) {
+
+  keep_metrics <- c("MPJPE", "MPJVE", "Energy")
+  parts <- c("Full", "Upper", "Lower", "Trunk")
+
+  selected_cols <- c()
+
+  for (p in parts) {
+    for (m in keep_metrics) {
+
+      matches <- grep(
+        paste0("^", p, "_", m, " "),   # space ensures exact metric match
+        colnames(df),
+        value = TRUE
+      )
+
+      selected_cols <- c(selected_cols, matches)
+    }
+  }
+
+  # Safety check
+  if (length(selected_cols) != 12) {
+    stop(paste("Expected 12 columns, got", length(selected_cols)))
+  }
+
+  df_filtered <- df[, c("Method", selected_cols), drop=FALSE]
+
+  return(df_filtered)
+}
+
+print(prepare_article_table(summary_df))
+```
+
+```{r article table, echo=FALSE, warning=FALSE, message=FALSE}
+# Function to put 2 decimals for values between 1e-2 and 1e3, and scientific notation otherwise
+format_mixed <- function(x) {
+  ifelse(abs(x) >= 1e-2 & abs(x) < 1e3,
+         sprintf("%.2f", x),
+         formatC(x, format = "e", digits = 2))
+}
+
+# Article-like table plot
+plot_article_table <- function(df) {
+
+  df <- prepare_article_table(df)
+
+  if (ncol(df) != 13) {
+    stop("Expected 12 metric columns + Method")
+  }
+
+  # Body
+  body <- df
+  
+  # Format numeric columns to 2 decimals
+  body[,-1] <- lapply(body[,-1], format_mixed)
+
+  # Base table (WITHOUT headers)
+  g <- tableGrob(body,
+                 rows = NULL,
+                 cols = NULL,
+                 theme = ttheme_minimal(
+                   core = list(fg_params = list(cex=0.65))
+                 ))
+
+  # ---- HEADER ROW 2 (MPJPE / MPJVE / Energy) ----
+  header2 <- c("Method", rep(c("MPJPE (m)","MPJVE (m/s)","Energy Ratio"), 4))
+
+  header2_grob <- tableGrob(t(header2), rows=NULL,
+                            theme = ttheme_minimal(
+                              core = list(fg_params=list(fontface="bold", cex=0.7))
+                            ))
+
+  # ---- HEADER ROW 1 (Full / Upper / Lower / Trunk with spans) ----
+  header1 <- gtable(widths = g$widths, heights = unit(1, "lines"))
+
+  labels <- c("Body part", "Full", "Upper", "Lower", "Trunk")
+  spans  <- c(1, 3, 3, 3, 3)
+
+  col_start <- 1
+
+  for (i in seq_along(labels)) {
+
+    header1 <- gtable_add_grob(
+      header1,
+      textGrob(labels[i], gp=gpar(fontface="bold", cex=0.7)),
+      t=1,
+      l=col_start,
+      r=col_start + spans[i] - 1
+    )
+
+    col_start <- col_start + spans[i]
+  }
+
+  # ---- STACK TABLE ----
+  g_final <- gtable_rbind(header1, header2_grob, g)
+
+  grid.newpage()
+  grid.draw(g_final)
+}
+
+plot_article_table(summary_df)
+```
+
 
 
 
