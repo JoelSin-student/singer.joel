@@ -68,7 +68,8 @@ def join_nonempty(*parts):
 
 
 def is_repo_root(path: Path) -> bool:
-    return (path / "main.py").is_file() and (path / "notebooks").is_dir() and (path / "data").is_dir()
+    has_controller = (path / "sources" / "main.py").is_file() or (path / "main.py").is_file()
+    return has_controller and (path / "notebooks").is_dir() and (path / "data").is_dir()
 
 
 def find_repo_root(start: Path) -> Path:
@@ -76,7 +77,7 @@ def find_repo_root(start: Path) -> Path:
         if is_repo_root(candidate):
             return candidate
     raise FileNotFoundError(
-        f"Could not find repository root from {start}. Open this notebook from the project folder that contains main.py, notebooks/, and data/."
+        f"Could not find repository root from {start}. Open this notebook from the project folder that contains sources/main.py, notebooks/, and data/."
     )
 
 

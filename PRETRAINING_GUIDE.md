@@ -18,7 +18,7 @@ Both can be:
 
 ## Pretraining Strategy
 
-Those strategies can be selected in main.ipynb with the different ablation commands, expect for hyperparameters like the number of epochs. Those hyperparameters can be defined by hand in the commandlines, or the notebooks\config\transformer_encoder .yaml files.
+Those strategies can be selected in main.ipynb with the different ablation commands, expect for hyperparameters like the number of epochs. Those hyperparameters can be defined by hand in the commandlines, or the sources\config\transformer_encoder .yaml files.
 
 ### Strategy 1: Pretrain from Scratch (Recommended for new data)
 
