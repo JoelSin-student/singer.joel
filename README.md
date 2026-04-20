@@ -15,7 +15,7 @@ To train the model, predict skeleton joints dimensions from OpenGo data and visu
 
 **main.ipynb**: to run preprocessing, (pre-)training, prediction and visualization.
 
-**main.py**: code controller.
+**sources/main.py**: code controller.
 
 **main.Rmd**: to run statistical analyses about model quality.
 
@@ -29,22 +29,26 @@ To train the model, predict skeleton joints dimensions from OpenGo data and visu
  - `data/raw_data/Awinda`: raw data of Awinda IMMU system (full-body no-hands)
  - `data/raw_data/Insoles`: raw data of OpenGo insole sensors
  - `data/clean_data`: preprocessed data of both systems
+ - `data/clean_data/Awinda_targets_soleformer`: skeleton data for the SoleFormer pipeline
  - `data/training_data/Insole`: training datasets of preprocessed insole data
  - `data/training_data/skeleton`: training datasets of preprocessed Awinda data
  - `data/test_data/Insole`: test datasets of preprocessed insole data
  - `data/test_data/skeleton`: test datasets of preprocessed Awinda data.
 
-**Notebooks**: all the code for model training, prediction and visualization:
- - `notebooks/config/transformer_encoder`: configuration files (what model to use, with what hyperparameters, where to find files, ...)
- - `notebooks/usefull_tools`: weight checking tool, data preprocessing notebook and insole-extracted tabs synchroniser
- - `notebooks/loader.py`: functions and classes to load and arrange data for the model
- - `notebooks/model.py`: deep learning models
- - `notebooks/train.py`: to train the model with training data
- - `notebooks/predict.py`: to predict joints' positions from test insole data and trained model
- - `notebooks/visualization.py`: code to create an animation comparing ground-truth and predicted skeletons.
+**Notebooks**: notebook-only workflow files:
+ - `notebooks/usefull_tools`: data preprocessing notebook
+
+**Sources**: all Python source code and model configuration files:
+ - `sources/config/transformer_encoder`: configuration files (model, hyperparameters, paths)
+ - `sources/loader.py`: functions and classes to load and arrange data for the model
+ - `sources/model.py`: deep learning models
+ - `sources/train.py`: to train the model with training data
+ - `sources/predict.py`: to predict joints' positions from test insole data and trained model
+ - `sources/visualization.py`: code to create an animation comparing ground-truth and predicted skeletons
+ - `sources/usefull_tools`: weight checking tool and insole-extracted tabs synchroniser
 
 **Sources**
-Conceptually, all the code should be in this file, because we are using source Python files. However, they distinguish themselves by having a "start" function that organizes functions between them, before sending to main.py (model controller), and then being called by the commandlines in main.ipynb. We put only the util.py, defining functions used in main.ipynb for the main pipeline,.
+Conceptually, all the code should be in this file, because we are using source Python files. However, they distinguish themselves by having a "start" function that organizes functions between them, before sending to sources/main.py (model controller), and then being called by the commandlines in main.ipynb. We put only the util.py, defining functions used in main.ipynb for the main pipeline,.
  - `sources/util.py`: functions for robust path resolving, file names creation, preprocessing calling, robust command running, ablation management
 
 **Report**: R markdown, references and images for HTML project report.

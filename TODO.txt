@@ -1,0 +1,44 @@
+--------URGENT--------
+
+- R code for MPJPE, PA-MPJPE (aka reconstruction error), MPJVE
+
+- remove unnecessary files
+
+
+--------ADVANCEMENTS--------
+
+Mieux se rendre compte des data (rescaling, régressions « faciles », vues en 3D, comparaison IMU delsys et IMMU xsens, …)
+-> e.g. accel poing/pied vs activation d’un muscle
+
+e.g. co-contraction cuisse coup de pied/poing
+
+e.g. accel des semelles vs accel de Awinda
+
+…
+
+
+Essayer config extrêmes des hyperparamètres
+
+Essayer avec poignets en plus
+
+PCA
+
+Raisonner en angles, nouveau mode basé soit sur P2P soit SoleFormer selon les essais avec les hyperparamètres. PCA encore
+
+Comment utiliser l’EMG ?  Quelles sont les infos utiles ? 
+
+Qu’est-ce que ça veut dire concrètement d’ajouter du poids à certaines features ? Un deuxième minmax entre les canaux cette fois-ci ? -> multiplier toutes les valeurs d’un canal par un coefficient relatif au pouvoir explicatif de cette feature -> un moyen : degré de normalité du vecteur de PCA associé au plus proche vecteur / importance plot.
+
+Essayer prédiction composée de sous-prédictions plus ou moins liées qui résultent en une seule à la fin. Loss cycles à chaque fois ? -> pour faire matcher deux prédictions indépendantes ? Voir le long papier. 
+
+Concept de l’algo
+
+Applicabilité : réviser/créer des indices de performance avec nos data, pour montrer 
+
+
+
+
+
+
+
+

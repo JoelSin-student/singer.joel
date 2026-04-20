@@ -1,0 +1,15 @@
+# Specify visualization parameters in YAML
+
+mode: visual
+
+location:
+  data_path: "data/test_data"
+  config_path: "sources/config/transformer_encoder/visual.yaml"
+
+visual:
+  model_mode: soleformer  # original | simple_seq2seq | soleformer
+  pred_file: null  # Optional explicit prediction CSV (alias: prediction_file)
+  real_file: null  # Optional explicit ground-truth CSV (alias: ground_truth_file)
+  start_frame: 0
+  step: 1  # Step size for frame sampling (e.g., 1 for every frame, 2 for every other frame)
+  output_html: "./results/animation"  # Output directory; output file is Animation_<input_tag>_<model_mode>.html

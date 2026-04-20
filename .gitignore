@@ -2,6 +2,9 @@
 *.csv
 *.xlsx
 *.txt
+*.RData
+*.Rhistory
+*.Rproj.user
 
 !data\raw_data\Awinda\Awinda_001CcSs_3_shadow_training.xlsx
 !data\raw_data\Awinda\Awinda_001CcSs_3_shadow_test.csv
@@ -14,4 +17,5 @@
 # Except
 !readme.txt
 !sources\ablation_commands.csv
+!TODO.txt
 .Rproj.user
