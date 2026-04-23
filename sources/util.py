@@ -30,6 +30,8 @@ def print_config(params):
     print(f"  Output Dimension: {params.get('output_dim', 'n/a')}")
     print(f"  Number of Joints: {params.get('num_joints', 'n/a')}")
     print(f"  Number of Dimensions: {params.get('num_dims', 'n/a')}")
+    print(f"  use_graph_pressure: {params.get('use_graph_pressure', 'n/a')}")
+    print(f"  use_single_attention: {params.get('use_single_attention', 'n/a')}")
     print("---" * 20)
 
 
@@ -329,6 +331,8 @@ _MODE_ALLOWED_FLAGS = {
         "--include_target_joint_angles",
         "--joint_angles_tab_suffix",
         "--smoothing_sigma",
+        "--soleformer_use_graph_pressure",
+        "--soleformer_use_single_attention",
     },
     "predict": {
         "--use_time_feature",
@@ -338,6 +342,8 @@ _MODE_ALLOWED_FLAGS = {
         "--grad_smooth_grad1",
         "--smoothing_sigma",
         "--max_windows",
+        "--soleformer_use_graph_pressure",
+        "--soleformer_use_single_attention",
     },
     "visual": set(),
 }

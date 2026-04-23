@@ -43,6 +43,8 @@ train:
   soleformer_weight_decay: 0.0001
   soleformer_sequence_len: 32  # Increased context for KickCap dynamics while keeping SoleFormer-only scope
   soleformer_use_lower_leg_angles_for_accelnet: true  # Paper-style: derive foot orientation from ankle->toe for IMU cycle
+  soleformer_use_graph_pressure: true  # Set false to replace the pressure GNN with an MLP encoder
+  soleformer_use_single_attention: false  # Set true to keep only pressure -> IMU cross-attention
   soleformer_use_weight_decay_schedule: true  # Warm-up + cosine decay for weight decay
   soleformer_weight_decay_warmup_epochs: 5
   soleformer_min_weight_decay: 0.0

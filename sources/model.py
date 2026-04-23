@@ -250,6 +250,7 @@ class SoleFormer(nn.Module):
         output_dim,
         dropout=0.1,
         use_graph_pressure=True,
+        use_single_attention=False,
     ):
         super().__init__()
         self.model_mode = "soleformer"
@@ -262,6 +263,7 @@ class SoleFormer(nn.Module):
         self.d_model = d_model
         self.num_encoder_layers = num_encoder_layers
         self.use_graph_pressure = use_graph_pressure
+        self.use_single_attention = bool(use_single_attention)
 
         # Stream 1: Pressure feature extraction using Graph Neural Network
         if use_graph_pressure:
@@ -313,17 +315,20 @@ class SoleFormer(nn.Module):
             self.pressure_to_imu_cross_layers.append(
                 nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
             )
-            
-            # Cross-attention: IMU queries attend to pressure keys/values
-            self.imu_to_pressure_cross_layers.append(
-                nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-            )
+
+            # Cross-attention: IMU queries attend to pressure keys/values unless the
+            # single-attention ablation is enabled.
+            if not self.use_single_attention:
+                self.imu_to_pressure_cross_layers.append(
+                    nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+                )
             
             # Layer normalization
             self.pressure_norm_layers.append(nn.LayerNorm(d_model))
             self.imu_norm_layers.append(nn.LayerNorm(d_model))
             self.pressure_cross_norm_layers.append(nn.LayerNorm(d_model))
-            self.imu_cross_norm_layers.append(nn.LayerNorm(d_model))
+            if not self.use_single_attention:
+                self.imu_cross_norm_layers.append(nn.LayerNorm(d_model))
 
         # Fusion decoder
         self.fusion_decoder = nn.Sequential(
@@ -375,14 +380,15 @@ class SoleFormer(nn.Module):
             pressure_cross, _ = self.pressure_to_imu_cross_layers[i](
                 pressure_feat, imu_feat, imu_feat
             )
-            # IMU stream attends to pressure information
-            imu_cross, _ = self.imu_to_pressure_cross_layers[i](
-                imu_feat, pressure_feat, pressure_feat
-            )
-
             # Add & normalize
             pressure_feat = self.pressure_cross_norm_layers[i](pressure_feat + pressure_cross)
-            imu_feat = self.imu_cross_norm_layers[i](imu_feat + imu_cross)
+
+            if not self.use_single_attention:
+                # IMU stream attends to pressure information
+                imu_cross, _ = self.imu_to_pressure_cross_layers[i](
+                    imu_feat, pressure_feat, pressure_feat
+                )
+                imu_feat = self.imu_cross_norm_layers[i](imu_feat + imu_cross)
 
         # Fusion and output
         fused = torch.cat([pressure_feat, imu_feat], dim=-1)
@@ -552,6 +558,8 @@ def _build_model_config(model):
         model_config["nhead"] = model.pressure_self_layers[0].num_heads
         model_config["num_encoder_layers"] = len(model.pressure_self_layers)
         model_config["output_dim"] = model.output_dim
+        model_config["use_graph_pressure"] = bool(getattr(model, "use_graph_pressure", True))
+        model_config["use_single_attention"] = bool(getattr(model, "use_single_attention", False))
     return model_config
 
 

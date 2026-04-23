@@ -62,6 +62,13 @@ def infer_model_config_from_checkpoint(checkpoint, fallback_num_joints):
     elif any(k.startswith("fusion_decoder.") and k.endswith(".weight") for k in state_dict):
         inferred_mode = "soleformer"
 
+        pressure_is_graph = any(k.startswith("pressure_feature_extractor.sensor_projection") for k in state_dict)
+        model_config.setdefault("use_graph_pressure", bool(pressure_is_graph))
+        model_config.setdefault(
+            "use_single_attention",
+            not any(k.startswith("imu_to_pressure_cross_layers.") for k in state_dict),
+        )
+
         imu_weight = state_dict.get("imu_feature_extractor.0.weight", None)
         if imu_weight is not None:
             model_config.setdefault("imu_dim", imu_weight.shape[1])
@@ -305,6 +312,8 @@ def start(args):
             num_encoder_layers=parameters["num_encoder_layer"],
             output_dim=parameters["output_dim"],
             dropout=parameters["dropout"],
+            use_graph_pressure=_to_bool(checkpoint_model_config.get("use_graph_pressure", True), default=True),
+            use_single_attention=_to_bool(checkpoint_model_config.get("use_single_attention", False), default=False),
         ).to(device)
     else:
         model = Transformer_Encoder(
@@ -398,5 +407,7 @@ def get_parser(add_help=False):
     parser.add_argument("--grad_window_length", type=int, default=None)
     parser.add_argument("--grad_polyorder", type=int, default=None)
     parser.add_argument("--grad_smooth_grad1", type=str, default=None)
+    parser.add_argument("--soleformer_use_graph_pressure", type=str, default=None)
+    parser.add_argument("--soleformer_use_single_attention", type=str, default=None)
 
     return parser

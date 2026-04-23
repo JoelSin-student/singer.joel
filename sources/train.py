@@ -308,6 +308,14 @@ def start(args):
             config["train"].get("soleformer_use_lower_leg_angles_for_accelnet", False),
             default=False,
         )
+        use_graph_pressure = _to_bool(
+            config["train"].get("soleformer_use_graph_pressure", config["train"].get("use_graph_pressure", True)),
+            default=True,
+        )
+        use_single_attention = _to_bool(
+            config["train"].get("soleformer_use_single_attention", config["train"].get("use_single_attention", False)),
+            default=False,
+        )
         use_weight_decay_schedule = _to_bool(
             config["train"].get("soleformer_use_weight_decay_schedule", False),
             default=False,
@@ -317,6 +325,8 @@ def start(args):
             config["train"].get("use_lower_leg_angles_for_accelnet", False),
             default=False,
         )
+        use_graph_pressure = True
+        use_single_attention = False
         use_weight_decay_schedule = _to_bool(
             config["train"].get("use_weight_decay_schedule", False),
             default=False,
@@ -391,6 +401,8 @@ def start(args):
         "imu_cycle_loss_weight": imu_cycle_loss_weight,
         "pressure_cycle_loss_weight": pressure_cycle_loss_weight,
         "use_lower_leg_angles_for_accelnet": bool(use_lower_leg_angles_for_accelnet and model_mode == "soleformer"),
+        "use_graph_pressure": bool(use_graph_pressure and model_mode == "soleformer"),
+        "use_single_attention": bool(use_single_attention and model_mode == "soleformer"),
         "use_weight_decay_schedule": bool(use_weight_decay_schedule and model_mode == "soleformer"),
         "weight_decay_warmup_epochs": weight_decay_warmup_epochs,
         "min_weight_decay": min_weight_decay,
@@ -475,6 +487,8 @@ def start(args):
             num_encoder_layers=parameters["num_encoder_layer"],
             output_dim=parameters["output_dim"],
             dropout=parameters["dropout"],
+            use_graph_pressure=parameters["use_graph_pressure"],
+            use_single_attention=parameters["use_single_attention"],
         ).to(device)
     else:
         model = Transformer_Encoder(
@@ -663,6 +677,8 @@ def start(args):
         "train_imu_cycle_loss_weight": imu_cycle_loss_weight,
         "train_pressure_cycle_loss_weight": pressure_cycle_loss_weight,
         "train_use_lower_leg_angles_for_accelnet": bool(parameters["use_lower_leg_angles_for_accelnet"]),
+        "train_use_graph_pressure": bool(parameters["use_graph_pressure"]),
+        "train_use_single_attention": bool(parameters["use_single_attention"]),
         "train_use_weight_decay_schedule": bool(parameters["use_weight_decay_schedule"]),
         "train_weight_decay_warmup_epochs": int(parameters["weight_decay_warmup_epochs"]),
         "train_min_weight_decay": float(parameters["min_weight_decay"]),
@@ -763,6 +779,8 @@ def start(args):
             "imu_dim": int(train_imu_scaled.shape[1]),
             "model_mode": parameters["model_mode"],
             "abl_id": abl_id,
+            "use_graph_pressure": bool(parameters["use_graph_pressure"]),
+            "use_single_attention": bool(parameters["use_single_attention"]),
         },
         **checkpoint_extra,
     }
@@ -829,6 +847,8 @@ def get_parser(add_help=False):
     parser.add_argument("--soleformer_weight_decay", type=float, default=None)
     parser.add_argument("--soleformer_sequence_len", type=int, default=None)
     parser.add_argument("--soleformer_use_lower_leg_angles_for_accelnet", type=str, default=None)
+    parser.add_argument("--soleformer_use_graph_pressure", type=str, default=None)
+    parser.add_argument("--soleformer_use_single_attention", type=str, default=None)
     parser.add_argument("--soleformer_use_weight_decay_schedule", type=str, default=None)
     parser.add_argument("--soleformer_weight_decay_warmup_epochs", type=int, default=None)
     parser.add_argument("--soleformer_min_weight_decay", type=float, default=None)
