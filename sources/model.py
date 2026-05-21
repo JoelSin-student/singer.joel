@@ -413,6 +413,7 @@ class DoubleCycleConsistencyLoss(nn.Module):
         weight_pressure_cycle=0.5,
         weight_2d_loss=1.0,
         weight_3d_loss=1.0,
+        pose_loss_mode="both",
         enable_imu_cycle=True,
         enable_pressure_cycle=True,
         use_lower_leg_angles_for_accelnet=False,
@@ -426,6 +427,7 @@ class DoubleCycleConsistencyLoss(nn.Module):
         self.weight_pressure_cycle = weight_pressure_cycle
         self.weight_2d_loss = weight_2d_loss
         self.weight_3d_loss = weight_3d_loss
+        self.pose_loss_mode = str(pose_loss_mode).strip().lower()
         self.enable_imu_cycle = enable_imu_cycle
         self.enable_pressure_cycle = enable_pressure_cycle
         self.use_lower_leg_angles_for_accelnet = bool(use_lower_leg_angles_for_accelnet)
@@ -480,7 +482,18 @@ class DoubleCycleConsistencyLoss(nn.Module):
             target_pose_xyz = target_pose.view(*target_pose.shape[:-1], -1, 3)
             pose_2d_loss = F.mse_loss(pred_pose_xyz[..., :2], target_pose_xyz[..., :2])
             pose_3d_loss = F.mse_loss(pred_pose_xyz, target_pose_xyz)
-            pose_loss = self.weight_2d_loss * pose_2d_loss + self.weight_3d_loss * pose_3d_loss
+            if self.pose_loss_mode == "2d":
+                pose_loss = self.weight_2d_loss * pose_2d_loss
+            elif self.pose_loss_mode == "3d":
+                pose_loss = self.weight_3d_loss * pose_3d_loss
+            elif self.pose_loss_mode == "both":
+                pose_loss = self.weight_2d_loss * pose_2d_loss + self.weight_3d_loss * pose_3d_loss
+            elif self.pose_loss_mode in {"none", "off", "disabled"}:
+                pose_loss = pred_pose.new_tensor(0.0)
+            else:
+                raise ValueError(
+                    f"Unsupported pose_loss_mode='{self.pose_loss_mode}'. Expected '2d', '3d', 'both', or 'none'."
+                )
         else:
             pose_3d_loss = F.mse_loss(pred_pose, target_pose)
             pose_loss = pose_3d_loss

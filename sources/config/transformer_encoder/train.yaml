@@ -55,6 +55,7 @@ train:
   enable_pressure_cycle_loss: true
   pose_loss_weight_2d: 1.0
   pose_loss_weight_3d: 1.0
+  pose_loss_mode: both  # 2d | 3d | both | none
   imu_cycle_loss_weight: 1.0
   pressure_cycle_loss_weight: 1.0
   freeze_pretrained_cycle_nets: true

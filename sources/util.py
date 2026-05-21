@@ -25,6 +25,7 @@ def print_config(params):
     print("\n[Loss Function Parameters]")
     print(f"  Loss Alpha: {params.get('loss_alpha', 'mse-only')}")
     print(f"  Loss Beta: {params.get('loss_beta', 'mse-only')}")
+    print(f"  pose_loss_mode: {params.get('pose_loss_mode', 'both')}")
     print("\n[Other Settings]")
     print(f"  Input Dimension: {params.get('input_dim', 'n/a')}")
     print(f"  Output Dimension: {params.get('output_dim', 'n/a')}")
@@ -322,6 +323,7 @@ _MODE_ALLOWED_FLAGS = {
         "--pretrain_learning_rate",
         "--accelnet_pretrained_path",
         "--pressnet_pretrained_path",
+        "--pose_loss_mode",
         "--use_time_feature",
         "--use_gradient_data",
         "--grad_window_length",

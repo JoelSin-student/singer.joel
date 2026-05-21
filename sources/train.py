@@ -299,6 +299,7 @@ def start(args):
     pressnet_pretrained_path = config["train"].get("pressnet_pretrained_path", None)
     pretrain_epochs = int(config["train"].get("pretrain_epochs", 30))
     pretrain_learning_rate = float(config["train"].get("pretrain_learning_rate", 0.001))
+    pose_loss_mode = str(config["train"].get("pose_loss_mode", "both")).strip().lower()
     pose_loss_weight_2d = float(config["train"].get("pose_loss_weight_2d", 1.0))
     pose_loss_weight_3d = float(config["train"].get("pose_loss_weight_3d", 1.0))
     imu_cycle_loss_weight = float(config["train"].get("imu_cycle_loss_weight", 0.5))
@@ -398,6 +399,7 @@ def start(args):
         "freeze_pretrained_cycle_nets": freeze_pretrained_cycle_nets,
         "pose_loss_weight_2d": pose_loss_weight_2d,
         "pose_loss_weight_3d": pose_loss_weight_3d,
+        "pose_loss_mode": pose_loss_mode,
         "imu_cycle_loss_weight": imu_cycle_loss_weight,
         "pressure_cycle_loss_weight": pressure_cycle_loss_weight,
         "use_lower_leg_angles_for_accelnet": bool(use_lower_leg_angles_for_accelnet and model_mode == "soleformer"),
@@ -599,6 +601,7 @@ def start(args):
             weight_pressure_cycle=parameters["pressure_cycle_loss_weight"],
             weight_2d_loss=parameters["pose_loss_weight_2d"],
             weight_3d_loss=parameters["pose_loss_weight_3d"],
+            pose_loss_mode=parameters["pose_loss_mode"],
             enable_imu_cycle=parameters["enable_imu_cycle_loss"],
             enable_pressure_cycle=parameters["enable_pressure_cycle_loss"],
             use_lower_leg_angles_for_accelnet=parameters["use_lower_leg_angles_for_accelnet"],
@@ -820,6 +823,7 @@ def get_parser(add_help=False):
     parser.add_argument("--freeze_pretrained_cycle_nets", type=str, default=None)
     parser.add_argument("--pose_loss_weight_2d", type=float, default=None)
     parser.add_argument("--pose_loss_weight_3d", type=float, default=None)
+    parser.add_argument("--pose_loss_mode", type=str, default=None, choices=["2d", "3d", "both", "none", "off", "disabled"])
     parser.add_argument("--imu_cycle_loss_weight", type=float, default=None)
     parser.add_argument("--pressure_cycle_loss_weight", type=float, default=None)
     parser.add_argument("--accelnet_pretrained_path", type=str, default=None)

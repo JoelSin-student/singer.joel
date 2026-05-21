@@ -1,9 +1,3 @@
---------URGENT--------
-
-- R code for MPJPE, PA-MPJPE (aka reconstruction error), MPJVE
-
-- remove unnecessary files
-
 
 --------ADVANCEMENTS--------
 
@@ -16,6 +10,9 @@ e.g. accel des semelles vs accel de Awinda
 
 …
 
+
+
+Changer la fonction d'apprentissage en incorporant une contrainte sur la continuité des mouvements (minimisation du crackle, dérivée 5e de la position -> snap constant -> jerk non-linéaire -> accélération ).
 
 Essayer config extrêmes des hyperparamètres
 
