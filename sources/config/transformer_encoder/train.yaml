@@ -2,8 +2,6 @@ mode: train
 
 location:
   data_path: "data/training_data"
-  awinda_targets_dir: "data/clean_data/Awinda_targets_soleformer"
-  awinda_tabs_dir: "data/raw_data/Awinda/extracted_tabs/required_tabs"
   config_path: "sources/config/transformer_encoder/train.yaml"
 
 train:
@@ -16,32 +14,41 @@ train:
   dropout: 0.1
 
   # Training
-  epoch: 40  # Adjust in function of training and validation loss curves
-  batch_size: 64
+  epoch: 30  # Adjust in function of training and validation loss curves
+  batch_size: 32
+  validation_ratio: 0.2  # Used only when cv_enable is false
+
+  # Cross-validation
+  cv_enable: true  # Set true to run Group K-fold over training data
+  cv_n_splits: 4
+  cv_group_by: segment  # subject | situation | segment
+  cv_refit_full_model: true  # Train an additional model on 100% training data after CV
 
   # Optimization
   learning_rate: 0.0005
   weight_decay: 0.001
 
   # Preprocessing
-  sequence_len: 32  # Default for non-SoleFormer modes
+  sequence_len: 128  # Default for non-SoleFormer modes
   smoothing_sigma: 0.0
+  curriculum_by_situation: true  # Keep deterministic situation order when concatenating segments
+  shuffle_train_loader: false  # Recommended false with curriculum_by_situation=true
   use_time_feature: false  # Add normalized insole time as one extra input channel
-  use_gradient_data: false
+  use_gradient_data: true
   grad_window_length: 5  # Savitzky-Golay window length for derivatives
   grad_polyorder: 2  # Savitzky-Golay polynomial order
-  grad_smooth_grad1: false  # Smooth first derivative before second derivative
+  grad_smooth_grad1: true  # Smooth first derivative before second derivative
 
   # SoleFormer-specific hyperparameters (kept separate from shared defaults)
   soleformer_d_model: 512
   soleformer_n_head: 8
   soleformer_num_encoder_layer: 2  # Figure 3 shows a two-tier cross-attention block
   soleformer_dropout: 0.1
-  soleformer_epoch: 40
-  soleformer_batch_size: 64
+  soleformer_epoch: 200
+  soleformer_batch_size: 32
   soleformer_learning_rate: 0.0003
   soleformer_weight_decay: 0.0001
-  soleformer_sequence_len: 32  # Increased context for KickCap dynamics while keeping SoleFormer-only scope
+  soleformer_sequence_len: 128  # Increased context for KickCap dynamics while keeping SoleFormer-only scope
   soleformer_use_lower_leg_angles_for_accelnet: true  # Paper-style: derive foot orientation from ankle->toe for IMU cycle
   soleformer_use_graph_pressure: true  # Set false to replace the pressure GNN with an MLP encoder
   soleformer_use_single_attention: false  # Set true to keep only pressure -> IMU cross-attention
@@ -72,10 +79,5 @@ train:
   soleformer_use_cycle_loss: true
   soleformer_pretrain_accelnet: true
   soleformer_pretrain_pressnet: true
-
-  # SoleFormer targets (used only when model_mode=soleformer)
-  include_target_positions: true
-  include_target_joint_angles: false  # Keep target as available 3D joint positions from your data
-  joint_angles_tab_suffix: "Joint_Angles_ZXY"
 
 

@@ -184,6 +184,96 @@ def _resolve_files(config, args):
     return file_path_real, file_path_predict
 
 
+def _extract_cycle_id_from_pred_path(file_path_predict, model_mode):
+    stem = Path(file_path_predict).stem
+    prefix = "Predicted_skeleton_cycle_"
+    suffix = f"_{model_mode}"
+    if not stem.startswith(prefix) or not stem.endswith(suffix):
+        return None
+
+    core = stem[len(prefix) : -len(suffix)]
+    if "_" not in core:
+        return None
+    cycle_token = core.split("_", 1)[0]
+    if not cycle_token.isdigit():
+        return None
+    return int(cycle_token)
+
+
+def _infer_real_tag_from_pred_tag(pred_tag):
+    tag = str(pred_tag).strip()
+    tag = re.sub(r"^cycle_\d+_", "", tag)
+    tag = re.sub(r"^abl_id_\d+_", "", tag)
+    return tag
+
+
+def _resolve_visual_file_pairs(config, args, model_mode):
+    data_path = config['location']['data_path']
+    skeleton_dir = Path(data_path) / 'skeleton'
+    pred_dir = Path(".") / "results" / "output"
+
+    real_file_arg = (
+        (args.real_file if args and args.real_file else None)
+        or config['visual'].get('real_file', None)
+        or config['visual'].get('ground_truth_file', None)
+    )
+    pred_file_arg = (
+        (args.pred_file if args and args.pred_file else None)
+        or config['visual'].get('pred_file', None)
+        or config['visual'].get('prediction_file', None)
+    )
+
+    if pred_file_arg:
+        pred_files = [Path(pred_file_arg)]
+    else:
+        mode_candidates = sorted(pred_dir.glob(f'Predicted_skeleton*{model_mode}*.csv'))
+        all_candidates = sorted(pred_dir.glob('Predicted_skeleton*.csv'))
+        candidates = mode_candidates if mode_candidates else all_candidates
+        if not candidates:
+            raise FileNotFoundError('No Predicted_skeleton*.csv file found in results/output')
+
+        cycle_ids = [
+            _extract_cycle_id_from_pred_path(path, model_mode)
+            for path in candidates
+        ]
+        cycle_ids = [cid for cid in cycle_ids if cid is not None]
+        if cycle_ids:
+            latest_cycle = max(cycle_ids)
+            pred_files = [
+                path for path in candidates
+                if _extract_cycle_id_from_pred_path(path, model_mode) == latest_cycle
+            ]
+            print(
+                f"Auto-selected {len(pred_files)} prediction file(s) from latest cycle "
+                f"cycle_{latest_cycle:04d}."
+            )
+        else:
+            pred_files = [max(candidates, key=lambda p: p.stat().st_mtime)]
+            print("No cycle-tagged prediction file found; using the most recent prediction file.")
+
+    file_pairs = []
+    for pred_file in pred_files:
+        pred_file = Path(pred_file)
+        if not pred_file.is_file():
+            raise FileNotFoundError(f"Prediction file not found: {pred_file}")
+
+        if real_file_arg:
+            real_file = Path(real_file_arg)
+        else:
+            pred_tag = _extract_tag_from_pred_file(pred_file, model_mode)
+            inferred_real_tag = _infer_real_tag_from_pred_tag(pred_tag)
+            real_file = skeleton_dir / f"Awinda_{inferred_real_tag}.csv"
+
+        if not real_file.is_file():
+            raise FileNotFoundError(
+                f"Real skeleton file not found for prediction {pred_file}: {real_file}"
+            )
+
+        file_pairs.append((real_file, pred_file))
+
+    return file_pairs
+
+
 def _extract_tag_from_real_file(file_path_real):
     stem = file_path_real.stem
     if stem.startswith('Awinda_'):
@@ -212,6 +302,14 @@ def _build_input_tag(*tags):
     return '__'.join(unique_tags)
 
 
+def _build_animation_output_stem(real_tag, pred_tag, model_mode, abl_tag):
+    pred_tag_str = str(pred_tag).strip()
+    if pred_tag_str.startswith("cycle_"):
+        return join_nonempty(pred_tag_str, model_mode)
+    input_tag = _build_input_tag(real_tag, pred_tag_str)
+    return join_nonempty(abl_tag, input_tag, model_mode)
+
+
 def start(args=None):
     config = load_config(args, args.config if args else None, args.model if args else None)
     model_mode = str(config['visual'].get('model_mode', 'simple_seq2seq')).lower()
@@ -219,9 +317,8 @@ def start(args=None):
     abl_id = resolve_ablation_id(config, 'visual')
     abl_tag = format_ablation_tag(abl_id)
 
-    file_path_real, file_path_predict = _resolve_files(config, args)
-    print(f"Using real skeleton file: {file_path_real}")
-    print(f"Using predicted skeleton file: {file_path_predict}")
+    file_pairs = _resolve_visual_file_pairs(config, args, model_mode)
+    print(f"Visualization will process {len(file_pairs)} prediction file(s).")
 
     # CLI arguments override config values.
     start_frame = int(
@@ -243,10 +340,6 @@ def start(args=None):
     )
     play_frame_duration_ms = max(0, play_frame_duration_ms)
     
-    real_tag = _extract_tag_from_real_file(file_path_real)
-    pred_tag = _extract_tag_from_pred_file(file_path_predict, model_mode)
-    input_tag = _build_input_tag(real_tag, pred_tag)
-
     bones = [
         (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
         (4, 7), (4, 11), (7, 8), (8, 9), (9, 10), (11, 12), (12, 13), (13, 14),
@@ -254,118 +347,126 @@ def start(args=None):
         (15, 16), (16, 17), (17, 18), (19, 20), (20, 21), (21, 22),
     ]
 
-    df_real = pd.read_csv(file_path_real)
-    df_pred = pd.read_csv(file_path_predict)
-    print(f"Real data shape: {df_real.shape}")
-    print(f"Pred data shape: {df_pred.shape}")
+    for file_path_real, file_path_predict in file_pairs:
+        print(f"Using real skeleton file: {file_path_real}")
+        print(f"Using predicted skeleton file: {file_path_predict}")
 
-    if 'Frame' in df_real.columns and 'Frame' in df_pred.columns:
-        common_frames = sorted(set(df_real['Frame'].tolist()) & set(df_pred['Frame'].tolist()))
-        if common_frames:
-            df_real = df_real[df_real['Frame'].isin(common_frames)].sort_values('Frame').reset_index(drop=True)
-            df_pred = df_pred[df_pred['Frame'].isin(common_frames)].sort_values('Frame').reset_index(drop=True)
+        real_tag = _extract_tag_from_real_file(file_path_real)
+        pred_tag = _extract_tag_from_pred_file(file_path_predict, model_mode)
+        output_stem = _build_animation_output_stem(real_tag, pred_tag, model_mode, abl_tag)
 
-    frames_data_real = _process_skeleton_data(df_real)
-    frames_data_pred = _process_skeleton_data(df_pred)
+        df_real = pd.read_csv(file_path_real)
+        df_pred = pd.read_csv(file_path_predict)
+        print(f"Real data shape: {df_real.shape}")
+        print(f"Pred data shape: {df_pred.shape}")
 
-    end_frame = min(len(frames_data_real), len(frames_data_pred))
-    frames_data_real = frames_data_real[start_frame:end_frame:step]
-    frames_data_pred = frames_data_pred[start_frame:end_frame:step]
+        if 'Frame' in df_real.columns and 'Frame' in df_pred.columns:
+            common_frames = sorted(set(df_real['Frame'].tolist()) & set(df_pred['Frame'].tolist()))
+            if common_frames:
+                df_real = df_real[df_real['Frame'].isin(common_frames)].sort_values('Frame').reset_index(drop=True)
+                df_pred = df_pred[df_pred['Frame'].isin(common_frames)].sort_values('Frame').reset_index(drop=True)
 
-    if not frames_data_real or not frames_data_pred:
-        raise ValueError('No visualization frames available after slicing. Check start_frame/step settings.')
+        frames_data_real = _process_skeleton_data(df_real)
+        frames_data_pred = _process_skeleton_data(df_pred)
 
-    fig = go.Figure()
-    initial_traces = _create_frame_traces(
-        frames_data_real[0],
-        frames_data_pred[0],
-        bones,
-        showlegend=True,
-    )
-    for trace in initial_traces:
-        fig.add_trace(trace)
+        end_frame = min(len(frames_data_real), len(frames_data_pred))
+        frames_data_real = frames_data_real[start_frame:end_frame:step]
+        frames_data_pred = frames_data_pred[start_frame:end_frame:step]
 
-    frames = [
-        go.Frame(
-            data=_create_frame_traces(
-                real,
-                pred,
-                bones,
-                showlegend=True,
-            ),
-            name=f'frame{i}',
+        if not frames_data_real or not frames_data_pred:
+            raise ValueError('No visualization frames available after slicing. Check start_frame/step settings.')
+
+        fig = go.Figure()
+        initial_traces = _create_frame_traces(
+            frames_data_real[0],
+            frames_data_pred[0],
+            bones,
+            showlegend=True,
         )
-        for i, (real, pred) in enumerate(zip(frames_data_real, frames_data_pred))
-    ]
-    fig.frames = frames
+        for trace in initial_traces:
+            fig.add_trace(trace)
 
-    fig.update_layout(
-        title='3D Skeleton Animation: Real (Red) vs Prediction (Blue)',
-        scene=dict(
-            xaxis_title='X',
-            yaxis_title='Y',
-            zaxis_title='Z',
-            aspectmode='data',
-            domain=dict(x=[0.0, 0.72], y=[0.0, 1.0]),
-        ),
-        width=1000,
-        height=1000,
-        showlegend=True,
-        legend=dict(
-            x=0.74,
-            y=1.0,
-            yanchor='top',
-            xanchor='left',
-            itemsizing='constant',
-            bgcolor='rgba(255,255,255,0.3)',
-            borderwidth=0,
-            font=dict(size=10),
-        ),
-        margin=dict(l=10, r=10, t=60, b=10),
-        updatemenus=[{
-            'buttons': [
-                {'args': [None, {'frame': {'duration': play_frame_duration_ms, 'redraw': True}, 'fromcurrent': True}], 'label': 'Play', 'method': 'animate'},
-                {'args': [[None], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}], 'label': 'Pause', 'method': 'animate'},
-            ],
-            'direction': 'left',
-            'pad': {'r': 10, 't': 87},
-            'showactive': False,
-            'type': 'buttons',
-            'x': 0.1,
-            'xanchor': 'right',
-            'y': 0,
-            'yanchor': 'top',
-        }],
-        sliders=[{
-            'active': 0,
-            'yanchor': 'top',
-            'xanchor': 'left',
-            'currentvalue': {'font': {'size': 20}, 'prefix': 'Frame:', 'visible': True, 'xanchor': 'right'},
-            'transition': {'duration': 300, 'easing': 'cubic-in-out'},
-            'pad': {'b': 10, 't': 50},
-            'len': 0.9,
-            'x': 0.1,
-            'y': 0,
-            'steps': [
-                {
-                    'args': [[f.name], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}],
-                    'label': str(k),
-                    'method': 'animate',
-                }
-                for k, f in enumerate(frames)
-            ],
-        }],
-    )
+        frames = [
+            go.Frame(
+                data=_create_frame_traces(
+                    real,
+                    pred,
+                    bones,
+                    showlegend=True,
+                ),
+                name=f'frame{i}',
+            )
+            for i, (real, pred) in enumerate(zip(frames_data_real, frames_data_pred))
+        ]
+        fig.frames = frames
 
-    # Treat output_dir_config as a directory path; if a file path is given, use its parent.
-    output_dir = Path(output_dir_config)
-    if output_dir.suffix:  # Has file extension, so extract parent directory
-        output_dir = output_dir.parent
-    
-    output_file = output_dir / f"Animation_{join_nonempty(abl_tag, input_tag, model_mode)}.html"
-    os.makedirs(output_dir, exist_ok=True)
-    default_fps = max(1, int(round(1000.0 / max(1, play_frame_duration_ms))))
-    post_script = f"""
+        fig.update_layout(
+            title='3D Skeleton Animation: Real (Red) vs Prediction (Blue)',
+            scene=dict(
+                xaxis_title='X',
+                yaxis_title='Y',
+                zaxis_title='Z',
+                aspectmode='data',
+                domain=dict(x=[0.0, 0.72], y=[0.0, 1.0]),
+            ),
+            width=1000,
+            height=1000,
+            showlegend=True,
+            legend=dict(
+                x=0.74,
+                y=1.0,
+                yanchor='top',
+                xanchor='left',
+                itemsizing='constant',
+                bgcolor='rgba(255,255,255,0.3)',
+                borderwidth=0,
+                font=dict(size=10),
+            ),
+            margin=dict(l=10, r=10, t=60, b=10),
+            updatemenus=[{
+                'buttons': [
+                    {'args': [None, {'frame': {'duration': play_frame_duration_ms, 'redraw': True}, 'fromcurrent': True}], 'label': 'Play', 'method': 'animate'},
+                    {'args': [[None], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}], 'label': 'Pause', 'method': 'animate'},
+                ],
+                'direction': 'left',
+                'pad': {'r': 10, 't': 87},
+                'showactive': False,
+                'type': 'buttons',
+                'x': 0.1,
+                'xanchor': 'right',
+                'y': 0,
+                'yanchor': 'top',
+            }],
+            sliders=[{
+                'active': 0,
+                'yanchor': 'top',
+                'xanchor': 'left',
+                'currentvalue': {'font': {'size': 20}, 'prefix': 'Frame:', 'visible': True, 'xanchor': 'right'},
+                'transition': {'duration': 300, 'easing': 'cubic-in-out'},
+                'pad': {'b': 10, 't': 50},
+                'len': 0.9,
+                'x': 0.1,
+                'y': 0,
+                'steps': [
+                    {
+                        'args': [[f.name], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}],
+                        'label': str(k),
+                        'method': 'animate',
+                    }
+                    for k, f in enumerate(frames)
+                ],
+            }],
+        )
+
+        # Treat output_dir_config as a directory path; if a file path is given, use its parent.
+        output_dir = Path(output_dir_config)
+        if output_dir.suffix:  # Has file extension, so extract parent directory
+            output_dir = output_dir.parent
+
+        output_file = output_dir / f"Animation_{output_stem}.html"
+        os.makedirs(output_dir, exist_ok=True)
+        default_fps = max(1, int(round(1000.0 / max(1, play_frame_duration_ms))))
+        post_script = f"""
 var gd = document.getElementById('{{plot_id}}');
 if (gd) {{
     var currentFps = {default_fps};
@@ -424,19 +525,19 @@ if (gd) {{
     }}
 }}
 """
-    html_str = fig.to_html(
-        full_html=True,
-        include_plotlyjs='cdn',
-        div_id='skeleton_animation_fig',
-        post_script=post_script,
-    )
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(html_str)
+        html_str = fig.to_html(
+            full_html=True,
+            include_plotlyjs='cdn',
+            div_id='skeleton_animation_fig',
+            post_script=post_script,
+        )
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(html_str)
 
-    print(f"num frames: {len(frames)}")
-    print(f"Play frame duration (ms): {play_frame_duration_ms}")
-    print(f"Default FPS: {default_fps}")
-    print(f"Visualization successful. Saved to: {output_file}")
+        print(f"num frames: {len(frames)}")
+        print(f"Play frame duration (ms): {play_frame_duration_ms}")
+        print(f"Default FPS: {default_fps}")
+        print(f"Visualization successful. Saved to: {output_file}")
 
 
 def get_parser(add_help=False):

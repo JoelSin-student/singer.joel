@@ -1,6 +1,8 @@
 # Prediction processor
 import argparse
 import os
+import re
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -40,6 +42,181 @@ def _build_input_tag(tags):
     if not unique_tags:
         return "unknown"
     return "__".join(unique_tags)
+
+
+def _next_prediction_cycle_id(output_dir: Path):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pattern = re.compile(r"^Predicted_skeleton_cycle_(\d+)_")
+    max_id = 0
+    for path in output_dir.glob("Predicted_skeleton_cycle_*.csv"):
+        m = pattern.match(path.stem)
+        if not m:
+            continue
+        max_id = max(max_id, int(m.group(1)))
+    return max_id + 1
+
+
+def _split_predictions_by_segment(predictions, frame_indices, segment_ids, data_pairs):
+    sorted_tags = [tag for tag, _ in sorted(data_pairs.items())]
+    frame_idx = np.asarray(frame_indices, dtype=np.int64)
+    output_segment_ids = np.asarray(segment_ids, dtype=np.int64)[frame_idx]
+
+    split_outputs = []
+    for seg_id in sorted(np.unique(output_segment_ids).tolist()):
+        tag_index = int(seg_id) - 1
+        if tag_index < 0 or tag_index >= len(sorted_tags):
+            raise ValueError(f"Invalid segment id {seg_id} for {len(sorted_tags)} paired tags.")
+
+        tag = sorted_tags[tag_index]
+        mask = output_segment_ids == seg_id
+        split_outputs.append(
+            {
+                "tag": tag,
+                "predictions": predictions[mask],
+                "frame_indices": frame_idx[mask],
+            }
+        )
+
+    return split_outputs
+
+
+def _extract_subject_key_from_tag(tag):
+    tag_str = str(tag).strip()
+    if not tag_str:
+        return ""
+    return tag_str.split("_", 1)[0]
+
+
+def _build_segment_subject_map(data_pairs):
+    sorted_tags = [tag for tag, _ in sorted(data_pairs.items())]
+    segment_subject = {}
+    for segment_id, tag in enumerate(sorted_tags, start=1):
+        segment_subject[segment_id] = _extract_subject_key_from_tag(tag)
+    return segment_subject
+
+
+def _map_segments_to_subject_keys(segment_ids, segment_subject_map):
+    subject_keys = []
+    missing_segments = []
+    for seg_id in np.asarray(segment_ids, dtype=np.int64):
+        key = segment_subject_map.get(int(seg_id), "")
+        if not key:
+            missing_segments.append(int(seg_id))
+        subject_keys.append(key)
+
+    if missing_segments:
+        missing_segments = sorted(set(missing_segments))
+        raise KeyError(f"Missing subject mapping for segment id(s): {missing_segments}")
+
+    return np.asarray(subject_keys, dtype=object)
+
+
+def _load_subject_height_map():
+    repo_root = Path(__file__).resolve().parents[1]
+    subject_info_path = repo_root / "data" / "subject_info.txt"
+    if not subject_info_path.is_file():
+        raise FileNotFoundError(f"Subject info file not found: {subject_info_path}")
+
+    subject_info = np.genfromtxt(subject_info_path, delimiter=",", names=True, dtype=None, encoding="utf-8")
+    dtype_names = subject_info.dtype.names or ()
+    if "subject_key" not in dtype_names or "height" not in dtype_names:
+        raise ValueError(
+            "subject_info.txt must include 'subject_key' and 'height' columns for height denormalization."
+        )
+
+    height_map = {}
+    for row in np.atleast_1d(subject_info):
+        key = str(row["subject_key"]).strip()
+        if not key:
+            continue
+        height_map[key] = float(row["height"])
+    return height_map
+
+
+def _resolve_position_column_indices(target_column_names, target_position_columns, num_output_cols):
+    if target_column_names is None:
+        # Legacy checkpoints without column names: assume XYZ-only output.
+        if num_output_cols % 3 == 0:
+            return list(range(num_output_cols))
+        return []
+
+    columns = list(target_column_names)
+    index_by_name = {name: idx for idx, name in enumerate(columns)}
+
+    if target_position_columns:
+        indices = [index_by_name[name] for name in target_position_columns if name in index_by_name]
+        if indices:
+            return sorted(set(indices))
+
+    # Fallback for coordinate-style headers.
+    coord_pattern = re.compile(r"^(?:pos::)?[XYZ]\.\d+$")
+    return [idx for idx, name in enumerate(columns) if coord_pattern.match(str(name))]
+
+
+def _apply_subject_height_denorm(
+    predictions,
+    frame_indices,
+    segment_ids,
+    data_pairs,
+    target_column_names,
+    target_position_columns,
+):
+    if predictions.size == 0:
+        return predictions
+
+    coord_indices = _resolve_position_column_indices(
+        target_column_names=target_column_names,
+        target_position_columns=target_position_columns,
+        num_output_cols=predictions.shape[1],
+    )
+    if not coord_indices:
+        print("No position-coordinate columns detected for height denormalization; skipping.")
+        return predictions
+
+    sorted_tags = [tag for tag, _ in sorted(data_pairs.items())]
+    if not sorted_tags:
+        return predictions
+
+    frame_idx = np.asarray(frame_indices, dtype=np.int64)
+    if frame_idx.size != predictions.shape[0]:
+        raise ValueError(
+            f"Length mismatch for denormalization: frame_indices={frame_idx.size}, predictions={predictions.shape[0]}"
+        )
+
+    output_segment_ids = np.asarray(segment_ids, dtype=np.int64)[frame_idx]
+    height_map = _load_subject_height_map()
+
+    denorm = predictions.copy()
+    missing_subjects = []
+    for seg_id in np.unique(output_segment_ids):
+        tag_index = int(seg_id) - 1
+        if tag_index < 0 or tag_index >= len(sorted_tags):
+            raise ValueError(f"Invalid segment id {seg_id} for {len(sorted_tags)} paired tags.")
+
+        tag = sorted_tags[tag_index]
+        subject_key = _extract_subject_key_from_tag(tag)
+        if subject_key not in height_map:
+            missing_subjects.append(subject_key)
+            continue
+
+        subject_height = float(height_map[subject_key])
+        row_mask = output_segment_ids == seg_id
+        row_idx = np.where(row_mask)[0]
+        coord_idx = np.asarray(coord_indices, dtype=np.int64)
+        denorm[np.ix_(row_idx, coord_idx)] *= subject_height
+
+    if missing_subjects:
+        missing_subjects = sorted(set([m for m in missing_subjects if m]))
+        raise KeyError(
+            f"Missing subject heights in subject_info.txt for subject_key(s): {missing_subjects}"
+        )
+
+    print(
+        f"Applied subject-specific height denormalization on {len(coord_indices)} coordinate column(s)."
+    )
+    return denorm
 
 
 def infer_model_config_from_checkpoint(checkpoint, fallback_num_joints):
@@ -154,6 +331,71 @@ def load_minmax_scaler_from_checkpoint(checkpoint, prefix):
     return scaler
 
 
+def _load_subject_zscore_stats_from_checkpoint(checkpoint, prefix):
+    required_keys = [
+        f"{prefix}_subject_zscore_subject_keys",
+        f"{prefix}_subject_zscore_mean",
+        f"{prefix}_subject_zscore_std",
+        f"{prefix}_subject_zscore_global_mean",
+        f"{prefix}_subject_zscore_global_std",
+    ]
+    if not all(key in checkpoint for key in required_keys):
+        return None
+
+    keys = [str(k) for k in checkpoint[f"{prefix}_subject_zscore_subject_keys"]]
+    means = checkpoint[f"{prefix}_subject_zscore_mean"]
+    stds = checkpoint[f"{prefix}_subject_zscore_std"]
+    if len(keys) != len(means) or len(keys) != len(stds):
+        raise ValueError(
+            f"Invalid subject z-score checkpoint payload for '{prefix}': "
+            "subject keys, means, and stds lengths must match."
+        )
+
+    subject_stats = {}
+    for i, key in enumerate(keys):
+        subject_stats[key] = {
+            "mean": np.asarray(means[i], dtype=np.float32),
+            "std": np.asarray(stds[i], dtype=np.float32),
+        }
+
+    return {
+        "subject": subject_stats,
+        "global_mean": np.asarray(checkpoint[f"{prefix}_subject_zscore_global_mean"], dtype=np.float32),
+        "global_std": np.asarray(checkpoint[f"{prefix}_subject_zscore_global_std"], dtype=np.float32),
+    }
+
+
+def _transform_subject_channel_zscore(features, subject_keys, zscore_stats, eps=1e-8):
+    x = np.asarray(features, dtype=np.float32)
+    keys = np.asarray(subject_keys, dtype=object)
+    if x.ndim != 2:
+        raise ValueError(f"Expected 2D features, got shape {x.shape}")
+    if len(x) != len(keys):
+        raise ValueError("features and subject_keys must have the same number of rows")
+
+    subject_stats = zscore_stats["subject"]
+    global_mean = np.asarray(zscore_stats["global_mean"], dtype=np.float32)
+    global_std = np.asarray(zscore_stats["global_std"], dtype=np.float32)
+    global_std = np.maximum(global_std, np.float32(eps))
+
+    out = np.zeros_like(x, dtype=np.float32)
+    unseen_subjects = []
+    for subject_key in sorted(set([str(k) for k in keys])):
+        mask = keys == subject_key
+        stats = subject_stats.get(subject_key)
+        if stats is None:
+            unseen_subjects.append(subject_key)
+            mean = global_mean
+            std = global_std
+        else:
+            mean = np.asarray(stats["mean"], dtype=np.float32)
+            std = np.asarray(stats["std"], dtype=np.float32)
+            std = np.maximum(std, np.float32(eps))
+        out[mask] = (x[mask] - mean) / std
+
+    return out, unseen_subjects
+
+
 def start(args):
     config = load_config(args, args.config, args.model)
 
@@ -168,9 +410,6 @@ def start(args):
     insole_dir = os.path.join(config["location"]["data_path"], "Insole")
 
     skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)
-    pair_tags = list(skeleton_insole_datapath_pairs.keys())
-    input_tag = _build_input_tag(pair_tags)
-
     skeleton_df, insole_df, segment_ids = load_and_combine_data(skeleton_insole_datapath_pairs)
     pressure_lr_df, imu_lr_df, time_feature_df = restructure_insole_data(insole_df)
 
@@ -199,17 +438,48 @@ def start(args):
         )
         model_mode = checkpoint_mode
 
-    pressure_scaler = load_minmax_scaler_from_checkpoint(checkpoint, "pressure")
-    imu_scaler = load_minmax_scaler_from_checkpoint(checkpoint, "imu")
-    if pressure_scaler is None or imu_scaler is None:
-        print("Warning: checkpoint is missing feature scalers; using fit_transform on prediction data.")
-        pressure_scaler = MinMaxScaler()
-        imu_scaler = MinMaxScaler()
-        pressure_scaled = pressure_scaler.fit_transform(pressure_lr_df)
-        imu_scaled = imu_scaler.fit_transform(imu_lr_df)
+    segment_subject_map = _build_segment_subject_map(skeleton_insole_datapath_pairs)
+    subject_keys = _map_segments_to_subject_keys(segment_ids, segment_subject_map)
+
+    pressure_zscore_stats = _load_subject_zscore_stats_from_checkpoint(checkpoint, "pressure")
+    imu_zscore_stats = _load_subject_zscore_stats_from_checkpoint(checkpoint, "imu")
+    if pressure_zscore_stats is not None and imu_zscore_stats is not None:
+        pressure_scaled, pressure_unseen = _transform_subject_channel_zscore(
+            pressure_lr_df.to_numpy(),
+            subject_keys,
+            pressure_zscore_stats,
+        )
+        imu_scaled, imu_unseen = _transform_subject_channel_zscore(
+            imu_lr_df.to_numpy(),
+            subject_keys,
+            imu_zscore_stats,
+        )
+
+        unseen_subjects = sorted(set(pressure_unseen + imu_unseen))
+        if unseen_subjects:
+            print(
+                "Warning: prediction data includes subject key(s) not present in training z-score stats; "
+                "using global training z-score for those rows: "
+                f"{unseen_subjects}"
+            )
+        else:
+            print("Applied subject-wise per-channel z-score normalization from checkpoint.")
     else:
-        pressure_scaled = pressure_scaler.transform(pressure_lr_df)
-        imu_scaled = imu_scaler.transform(imu_lr_df)
+        pressure_scaler = load_minmax_scaler_from_checkpoint(checkpoint, "pressure")
+        imu_scaler = load_minmax_scaler_from_checkpoint(checkpoint, "imu")
+        if pressure_scaler is None or imu_scaler is None:
+            print(
+                "Warning: checkpoint is missing feature scalers; using fit_transform on prediction data. "
+                "This is only a fallback and may degrade results."
+            )
+            pressure_scaler = MinMaxScaler()
+            imu_scaler = MinMaxScaler()
+            pressure_scaled = pressure_scaler.fit_transform(pressure_lr_df)
+            imu_scaled = imu_scaler.fit_transform(imu_lr_df)
+        else:
+            print("Applied legacy MinMax feature scaling from checkpoint.")
+            pressure_scaled = pressure_scaler.transform(pressure_lr_df)
+            imu_scaled = imu_scaler.transform(imu_lr_df)
 
     use_time_feature = _to_bool(
         checkpoint.get("preprocessing_use_time_feature", config["predict"].get("use_time_feature", False)),
@@ -226,6 +496,9 @@ def start(args):
         checkpoint.get("preprocessing_use_gradient_data", config["predict"].get("use_gradient_data", False)),
         default=False,
     )
+    if model_mode == "soleformer" and use_gradient_data:
+        print("SoleFormer mode: forcing use_gradient_data=False (derivative feature expansion is disabled).")
+        use_gradient_data = False
     if use_gradient_data:
         grad_window_length = int(
             checkpoint.get("preprocessing_grad_window_length", config["predict"].get("grad_window_length", 5))
@@ -246,7 +519,7 @@ def start(args):
                 "imu_std": np.asarray(checkpoint["grad_imu_std"], dtype=np.float32),
             }
 
-        pressure_scaled, imu_scaled = calculate_grad(
+        grad_outputs = calculate_grad(
             pressure_scaled,
             imu_scaled,
             window_length=grad_window_length,
@@ -254,6 +527,7 @@ def start(args):
             smooth_grad1=grad_smooth_grad1,
             normalization_stats=grad_feature_stats,
         )
+        pressure_scaled, imu_scaled = grad_outputs[0], grad_outputs[1]
         print(
             f"Derivative features enabled for prediction: input dim is "
             f"{pressure_scaled.shape[1] + imu_scaled.shape[1]}."
@@ -372,15 +646,41 @@ def start(args):
         final_predictions = final_predictions * skel_scale + skel_mean
         print("Applied skeleton inverse-transform (StandardScaler).")
 
-    print(f"Prediction finished. Output shape: {final_predictions.shape}")
     target_column_names = checkpoint.get("target_column_names", None)
-    save_predictions(
-        final_predictions,
-        args.model,
+    target_position_columns = checkpoint.get("target_position_columns", None)
+    final_predictions = _apply_subject_height_denorm(
+        predictions=final_predictions,
         frame_indices=output_frame_indices,
-        output_stem=join_nonempty(abl_tag, input_tag, model_mode),
-        column_names=target_column_names,
+        segment_ids=segment_ids,
+        data_pairs=skeleton_insole_datapath_pairs,
+        target_column_names=target_column_names,
+        target_position_columns=target_position_columns,
     )
+
+    print(f"Prediction finished. Output shape: {final_predictions.shape}")
+
+    split_outputs = _split_predictions_by_segment(
+        predictions=final_predictions,
+        frame_indices=output_frame_indices,
+        segment_ids=segment_ids,
+        data_pairs=skeleton_insole_datapath_pairs,
+    )
+    cycle_id = _next_prediction_cycle_id(Path(".") / "results" / "output")
+    cycle_tag = f"cycle_{cycle_id:04d}"
+
+    print(
+        f"Prediction cycle {cycle_tag}: saving {len(split_outputs)} prediction file(s), "
+        f"one per test tag."
+    )
+    for row in split_outputs:
+        stem = join_nonempty(cycle_tag, abl_tag, row["tag"], model_mode)
+        save_predictions(
+            row["predictions"],
+            args.model,
+            frame_indices=row["frame_indices"],
+            output_stem=stem,
+            column_names=target_column_names,
+        )
 
 
 def get_parser(add_help=False):

@@ -481,7 +481,10 @@ class DoubleCycleConsistencyLoss(nn.Module):
             pred_pose_xyz = pred_pose.view(*pred_pose.shape[:-1], -1, 3)
             target_pose_xyz = target_pose.view(*target_pose.shape[:-1], -1, 3)
             pose_2d_loss = F.mse_loss(pred_pose_xyz[..., :2], target_pose_xyz[..., :2])
-            pose_3d_loss = F.mse_loss(pred_pose_xyz, target_pose_xyz)
+            # Use MPJPE (mean per-joint position error) instead of MSE for 3D pose loss.
+            # MPJPE = mean over batch, time and joints of the Euclidean distance per joint.
+            diff = pred_pose_xyz - target_pose_xyz
+            pose_3d_loss = torch.norm(diff, dim=-1).mean()
             if self.pose_loss_mode == "2d":
                 pose_loss = self.weight_2d_loss * pose_2d_loss
             elif self.pose_loss_mode == "3d":
@@ -1162,3 +1165,4 @@ def save_predictions(predictions, model, frame_indices=None, output_stem=None, c
         df_predictions.insert(0, "Frame", frame_indices)
     df_predictions.to_csv(output_file, index=False)
     print(f"Predictions saved to {output_file}")
+    return output_file

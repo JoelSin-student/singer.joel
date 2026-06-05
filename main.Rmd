@@ -28,7 +28,7 @@ training_p2p <- read_csv("results/learning_results/Learning_results_original.csv
 
 training_seq2seq <- read_csv("results/learning_results/Learning_results_simple_seq2seq.csv")
 
-training_soleformer <- read_csv("results/learning_results/Learning_results_soleformer.csv")
+training_soleformer <- read_csv("results/learning_results/Learning_results_abl_id_1_soleformer.csv")
 
 # Plot train and val losses for each model in function of epoch
 lc_p2p <- training_p2p |> 
@@ -81,7 +81,7 @@ gt_files <- c(
 pred_files <- c(
   "results/output/Predicted_skeleton_001CcSs_3_shadow_test_original.csv",
   "results/output/Predicted_skeleton_001CcSs_3_shadow_test_simple_seq2seq.csv",
-  "results/output/Predicted_skeleton_001CcSs_3_shadow_test_soleformer.csv"
+  "results/output/Predicted_skeleton_001CcSs_3_shadow_test_soleformer_all.csv"
 )
 
 # Names of algo for titles
@@ -646,7 +646,84 @@ for (i in seq_along(gt_files)) {
 }
 ```
 
+### inconsistency
 
+inconsistency measures the temporal consistency of the prediction errors. It is defined as the standard deviation of the 3D joint position error across all frames, averaged across joints.
+
+A low inconsistency indicates stable and temporally coherent prediction errors, while a high inconsistency indicates fluctuating errors over time.
+
+```{r inconsistency comput, echo=FALSE, warning=FALSE, message=FALSE}
+# Inconsistency computation
+compute_inconsistency <- function(gt, pred) {
+
+  # Convert explicitly to numeric matrices
+  gx <- as.matrix(gt$X)
+  gy <- as.matrix(gt$Y)
+  gz <- as.matrix(gt$Z)
+
+  px <- as.matrix(pred$X)
+  py <- as.matrix(pred$Y)
+  pz <- as.matrix(pred$Z)
+
+  # Euclidean joint error
+  dist <- sqrt(
+    (px - gx)^2 +
+    (py - gy)^2 +
+    (pz - gz)^2
+  )
+
+  # Ensure pure numeric matrix
+  storage.mode(dist) <- "double"
+
+  # SD over frames for each joint
+  per_joint_sd <- apply(
+    dist,
+    2,
+    function(x) sd(x, na.rm = TRUE)
+  )
+
+  list(
+    per_joint = per_joint_sd,
+    full = mean(per_joint_sd, na.rm = TRUE),
+    sd = sd(per_joint_sd, na.rm = TRUE),
+    matrix = dist
+  )
+}
+
+# Main processing loop for Inconsistency
+for (i in seq_along(gt_files)) {
+
+  data <- prepare_pair(gt_files[i], pred_files[i])
+  method <- method_names[i]
+  
+  res <- compute_inconsistency(data$gt_pos, data$pred_pos)
+
+  # Segment aggregation from frame-wise distance matrix
+  segments <- get_segments(ncol(res$matrix))
+
+  segment_scores <- c(
+    Full = res$full,
+    Upper = mean(apply(res$matrix[, segments$upper, drop = FALSE],
+                       2, sd, na.rm = TRUE), na.rm = TRUE),
+    Lower = mean(apply(res$matrix[, segments$lower, drop = FALSE],
+                       2, sd, na.rm = TRUE), na.rm = TRUE),
+    Trunk = mean(apply(res$matrix[, segments$trunk, drop = FALSE],
+                       2, sd, na.rm = TRUE), na.rm = TRUE)
+  )
+
+  print(plot_segment_metric(segment_scores,
+                            paste("Body Part Inconsistency -", method),
+                            y_label = "Inconsistency (m)"))
+
+  print(plot_joint_ranking_metric(res$per_joint,
+                          paste("Joint Inconsistency Ranking -", method),
+                          y_label = "Temporal Error Variability (m)"))
+
+  cat("\n", method,
+      "- Mean Inconsistency:", round(res$full, 4), "m\n")
+}
+
+```
 
 
 ## Pose estimation realism metrics
@@ -871,6 +948,17 @@ build_summary_table <- function(gt_files, pred_files, method_names, energy_segme
     pa     <- compute_pa_mpjpe(data$gt_pos, data$pred_pos)
     mpjve  <- compute_mpjve(data$gt_pos, data$pred_pos)
     corr   <- compute_velocity_correlation(data$gt_pos, data$pred_pos)
+    # inconsistency
+    res_incon <- compute_inconsistency(data$gt_pos, data$pred_pos)
+
+    segments <- get_segments(length(res_incon$per_joint))
+
+    incon_s <- c(
+      full = res_incon$full,
+      upper = mean(res_incon$per_joint[segments$upper], na.rm = TRUE),
+      lower = mean(res_incon$per_joint[segments$lower], na.rm = TRUE),
+      trunk = mean(res_incon$per_joint[segments$trunk], na.rm = TRUE)
+    )
 
     # --- Segment aggregation ---
     mpjpe_s <- aggregate_segments(mpjpe$matrix, seg)
@@ -915,6 +1003,7 @@ build_summary_table <- function(gt_files, pred_files, method_names, energy_segme
                mpjpe_s[part],
                pa_s[part],
                mpjve_s[part],
+               incon_s[part],
                corr_s[part],
                energy_s[part],
                majae_s[part])
@@ -924,7 +1013,15 @@ build_summary_table <- function(gt_files, pred_files, method_names, energy_segme
   }
 
   # --- Column names ---
-  metrics <- c("MPJPE (m)","PA-MPJPE (m)","MPJVE (m/s)","VelCorr","Energy Ratio","MAJAE (deg)")
+  metrics <- c(
+    "MPJPE (m)",
+    "PA-MPJPE (m)",
+    "MPJVE (m/s)",
+    "Inconsistency (m)",
+    "VelCorr",
+    "Energy Ratio",
+    "MAJAE (deg)"
+  )
   parts <- c("Full","Upper","Lower","Trunk")
 
   col_names <- c()

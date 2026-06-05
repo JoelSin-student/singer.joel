@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import os
 import glob
+import re
 import yaml
 import time
 import torch
@@ -137,7 +138,7 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
     insole_files = glob.glob(os.path.join(insole_dir, "Soles_*.txt"))
 
     # Create dictionary to store skeleton/insole data pairs
-    data_pairs = defaultdict(lambda: {'skeleton': None, 'insole': None})
+    data_pairs: defaultdict[str, dict[str, str | None]] = defaultdict(lambda: {'skeleton': None, 'insole': None})
 
     # Extract tags from skeleton files and store them
     for file_path in skeleton_files:
@@ -174,7 +175,31 @@ def get_datapath_pairs(skeleton_dir, insole_dir):
     return data_pairs
 
 
-def load_and_combine_data(data_pairs):
+def _tag_sort_key_for_situation_curriculum(tag):
+    """Sort tags by subject then situation index (1..5) for curriculum learning."""
+    tag_str = str(tag).strip()
+    parts = tag_str.split('_')
+    subject_key = parts[0] if parts else ""
+
+    situation_idx = 10**9
+    if len(parts) > 1:
+        match = re.search(r"\d+", parts[1])
+        if match:
+            situation_idx = int(match.group(0))
+
+    remainder = "_".join(parts[2:]) if len(parts) > 2 else ""
+    return (subject_key, situation_idx, remainder, tag_str)
+
+
+def iter_ordered_data_pairs(data_pairs, order_by_situation=True):
+    """Return ordered (tag, paths) items with optional situation-aware curriculum sort."""
+    items = list(data_pairs.items())
+    if order_by_situation:
+        return sorted(items, key=lambda kv: _tag_sort_key_for_situation_curriculum(kv[0]))
+    return sorted(items, key=lambda kv: str(kv[0]))
+
+
+def load_and_combine_data(data_pairs, order_by_situation=True):
     """Load data from file-path dict and return concatenated DataFrames.
     Args:
         data_pairs (dict): Object with tags as keys and file-path dictionaries as values.
@@ -188,7 +213,7 @@ def load_and_combine_data(data_pairs):
     all_segment_ids = []
     
     # Load each file as DataFrame and append to lists
-    for segment_id, (tag, paths) in enumerate(sorted(data_pairs.items()), start=1):
+    for segment_id, (tag, paths) in enumerate(iter_ordered_data_pairs(data_pairs, order_by_situation), start=1):
         if paths['skeleton'] is None:
             raise ValueError(f"Missing skeleton file for tag '{tag}'")
 
@@ -208,9 +233,10 @@ def load_and_combine_data(data_pairs):
 
         if len(skeleton_df) != len(insole_df):
             raise ValueError(
-                f"Length mismatch for tag '{tag}': "
-                f"skeleton has {len(skeleton_df)} rows but insole has {len(insole_df)} rows. "
-                "Please rerun preprocessing synchronization before training."
+                f"Row mismatch for tag '{tag}': skeleton={len(skeleton_df)}, insole={len(insole_df)}. "
+                "Runtime tail-trimming is disabled in loader.py. "
+                "Run the final alignment cell in notebooks/usefull_tools/data_preprocessing.ipynb "
+                "to tail-trim the longer file in each clean_data pair."
             )
 
         all_skeleton_df.append(skeleton_df)
@@ -225,235 +251,6 @@ def load_and_combine_data(data_pairs):
         pd.concat(all_insole_df, ignore_index=True),
         np.concatenate(all_segment_ids, axis=0),
     )
-
-
-def _read_awinda_tab_csv(file_path):
-    """Read converted Awinda tab CSV files with delimiter fallback and numeric coercion."""
-    df = pd.read_csv(file_path, sep=';', engine='python')
-    if df.shape[1] == 1:
-        # Some exports are comma-delimited (e.g., extracted from pandas to_csv default).
-        df = pd.read_csv(file_path, sep=',', engine='python')
-
-    df.columns = df.columns.str.strip()
-    df = df.drop(columns=["Frame", "frame", "# time", "time", "Timestamp"], errors='ignore')
-
-    # Keep only numeric channels for model targets.
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    if df.shape[1] == 0:
-        raise ValueError(f"No usable numeric columns found in Awinda tab file: {file_path}")
-
-    return df
-
-
-def _resolve_awinda_tab_path(awinda_tabs_dir, tag, suffix, fallback_pattern=None):
-    preferred = os.path.join(awinda_tabs_dir, f"Awinda_{tag}_{suffix}.csv")
-    if os.path.isfile(preferred):
-        return preferred
-
-    candidates = glob.glob(os.path.join(awinda_tabs_dir, f"*_{tag}_{suffix}.csv"))
-    if len(candidates) == 1:
-        return candidates[0]
-
-    if fallback_pattern:
-        candidates = glob.glob(os.path.join(awinda_tabs_dir, f"Awinda_{tag}_{fallback_pattern}.csv"))
-        if len(candidates) != 1:
-            candidates = glob.glob(os.path.join(awinda_tabs_dir, f"*_{tag}_{fallback_pattern}.csv"))
-
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        raise ValueError(
-            f"Multiple Awinda tab files found for tag '{tag}' and suffix/pattern '{suffix}': {candidates}"
-        )
-
-    raise FileNotFoundError(
-        f"Awinda converted tab file not found for tag '{tag}' with suffix/pattern '{suffix}' in {awinda_tabs_dir}"
-    )
-
-
-def load_awinda_targets_from_converted_tabs(
-    data_pairs,
-    awinda_tabs_dir,
-    include_positions=True,
-    include_joint_angles=True,
-    joint_angles_suffix='tab9_Joint_Angles_ZXY',
-):
-    """Load and concatenate Awinda targets from converted tab CSV files.
-
-    Args:
-        data_pairs (dict): skeleton/insole pairing dictionary keyed by tag.
-        awinda_tabs_dir (str): Directory containing converted Awinda tab CSV files.
-        include_positions (bool): Include tab4 segment positions.
-        include_joint_angles (bool): Include joint-angle tab columns.
-        joint_angles_suffix (str): Tab suffix for angles, e.g. tab9_Joint_Angles_ZXY.
-
-    Returns:
-        tuple(pd.DataFrame, dict): Concatenated targets and metadata.
-    """
-    if not include_positions and not include_joint_angles:
-        raise ValueError("At least one target source must be enabled for Awinda target loading.")
-
-    all_targets = []
-    meta = {
-        "position_columns": [],
-        "angle_columns": [],
-        "joint_angles_suffix": joint_angles_suffix,
-    }
-    expected_columns = None
-
-    for _, (tag, _) in enumerate(sorted(data_pairs.items()), start=1):
-        target_parts = []
-
-        if include_positions:
-            pos_path = _resolve_awinda_tab_path(
-                awinda_tabs_dir,
-                tag,
-                'tab4_Segment_Position',
-                fallback_pattern='*Segment_Position*',
-            )
-            pos_df = _read_awinda_tab_csv(pos_path)
-            pos_df = pos_df.add_prefix('pos::')
-            target_parts.append(pos_df)
-            if not meta["position_columns"]:
-                meta["position_columns"] = list(pos_df.columns)
-
-        if include_joint_angles:
-            angle_pattern = f"*{joint_angles_suffix}*" if "*" not in joint_angles_suffix else joint_angles_suffix
-            angle_candidates = glob.glob(os.path.join(awinda_tabs_dir, f"Awinda_{tag}_{angle_pattern}.csv"))
-            if len(angle_candidates) != 1:
-                angle_candidates = glob.glob(os.path.join(awinda_tabs_dir, f"*_{tag}_{angle_pattern}.csv"))
-
-            # Exclude ergonomic-angle tabs by default to keep a single canonical joint-angle target.
-            angle_candidates = [
-                p for p in angle_candidates
-                if "ergonomic_joint_angles" not in os.path.basename(p).lower()
-            ]
-
-            if len(angle_candidates) != 1:
-                raise FileNotFoundError(
-                    f"Expected exactly one non-ergonomic angle tab for tag '{tag}' with pattern "
-                    f"'{angle_pattern}' in {awinda_tabs_dir}, found {len(angle_candidates)}"
-                )
-
-            ang_path = angle_candidates[0]
-            ang_df = _read_awinda_tab_csv(ang_path)
-            ang_df = ang_df.add_prefix('ang::')
-            target_parts.append(ang_df)
-            if not meta["angle_columns"]:
-                meta["angle_columns"] = list(ang_df.columns)
-
-        if not target_parts:
-            continue
-
-        combined_df = pd.concat(target_parts, axis=1)
-
-        if expected_columns is None:
-            expected_columns = list(combined_df.columns)
-        elif list(combined_df.columns) != expected_columns:
-            raise ValueError(
-                f"Awinda target schema mismatch for tag '{tag}'. "
-                f"Expected {len(expected_columns)} columns but got {combined_df.shape[1]}."
-            )
-
-        all_targets.append(combined_df)
-
-    if not all_targets:
-        raise ValueError("No Awinda targets were loaded from converted tab CSV files.")
-
-    meta["target_columns"] = list(all_targets[0].columns)
-    return pd.concat(all_targets, ignore_index=True), meta
-
-
-def load_awinda_targets_from_merged_csv(
-    data_pairs,
-    awinda_targets_dir,
-    include_positions=True,
-    include_joint_angles=True,
-):
-    """Load premerged Awinda target CSVs (AwindaTarget_<tag>.csv) for soleformer.
-
-    Args:
-        data_pairs (dict): skeleton/insole pairing dictionary keyed by tag.
-        awinda_targets_dir (str): Directory containing merged target files.
-
-    Returns:
-        tuple(pd.DataFrame, dict): Concatenated targets and metadata.
-    """
-    if not include_positions and not include_joint_angles:
-        raise ValueError("At least one target source must be enabled for Awinda target loading.")
-
-    all_targets = []
-    expected_columns = None
-    awinda_targets_dir = str(awinda_targets_dir)
-
-    for _, (tag, _) in enumerate(sorted(data_pairs.items()), start=1):
-        target_path = os.path.join(awinda_targets_dir, f"AwindaTarget_{tag}.csv")
-        if not os.path.isfile(target_path):
-            raise FileNotFoundError(
-                f"Merged Awinda target file not found for tag '{tag}': {target_path}"
-            )
-
-        df = pd.read_csv(target_path, sep=';', engine='python')
-        if df.shape[1] == 1:
-            df = pd.read_csv(target_path, sep=',', engine='python')
-
-        df.columns = df.columns.str.strip()
-        df = df.drop(columns=['Frame', 'frame', '# time', 'time', 'Timestamp'], errors='ignore')
-
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        if df.shape[1] == 0:
-            raise ValueError(f"No usable numeric target columns found in {target_path}")
-
-        # Filter merged targets according to requested source types.
-        position_columns = [c for c in df.columns if c.startswith('pos::')]
-        angle_columns = [c for c in df.columns if c.startswith('ang::')]
-
-        # Fallback when schema does not use explicit prefixes.
-        if not position_columns and not angle_columns:
-            position_columns = list(df.columns)
-        elif not position_columns and angle_columns:
-            position_columns = [c for c in df.columns if c not in angle_columns]
-
-        selected_columns = []
-        if include_positions:
-            selected_columns.extend(position_columns)
-        if include_joint_angles:
-            selected_columns.extend(angle_columns)
-
-        if not selected_columns:
-            raise ValueError(
-                f"Merged Awinda targets for tag '{tag}' do not contain columns matching the requested "
-                f"include_positions={include_positions}, include_joint_angles={include_joint_angles}."
-            )
-
-        df = df[selected_columns]
-
-        if expected_columns is None:
-            expected_columns = list(df.columns)
-        elif list(df.columns) != expected_columns:
-            raise ValueError(
-                f"Awinda merged target schema mismatch for tag '{tag}'. "
-                f"Expected {len(expected_columns)} columns but got {df.shape[1]}."
-            )
-
-        all_targets.append(df)
-
-    if not all_targets:
-        raise ValueError("No Awinda merged targets were loaded.")
-
-    first_cols = list(all_targets[0].columns)
-    meta = {
-        "target_columns": first_cols,
-        "position_columns": [c for c in first_cols if c.startswith('pos::')] or first_cols,
-        "angle_columns": [c for c in first_cols if c.startswith('ang::')],
-        "joint_angles_suffix": "merged_csv",
-    }
-
-    return pd.concat(all_targets, ignore_index=True), meta
 
 
 def restructure_insole_data(insole_df):
