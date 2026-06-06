@@ -2,6 +2,8 @@
 import argparse
 import os
 import re
+import time
+from typing import Any, cast
 from pathlib import Path
 
 import numpy as np
@@ -219,6 +221,42 @@ def _apply_subject_height_denorm(
     return denorm
 
 
+def _compute_acceleration(pos, fps=60.0):
+    if pos["X"].shape[0] < 3:
+        return {
+            "X": np.empty((0, pos["X"].shape[1]), dtype=np.float64),
+            "Y": np.empty((0, pos["Y"].shape[1]), dtype=np.float64),
+            "Z": np.empty((0, pos["Z"].shape[1]), dtype=np.float64),
+            "labels": pos["labels"],
+        }
+
+    scale = float(fps) ** 2
+    return {
+        "X": (pos["X"][2:, :] - 2.0 * pos["X"][1:-1, :] + pos["X"][:-2, :]) * scale,
+        "Y": (pos["Y"][2:, :] - 2.0 * pos["Y"][1:-1, :] + pos["Y"][:-2, :]) * scale,
+        "Z": (pos["Z"][2:, :] - 2.0 * pos["Z"][1:-1, :] + pos["Z"][:-2, :]) * scale,
+        "labels": pos["labels"],
+    }
+
+
+def _compute_mpjace(gt, pred, fps=60.0):
+    gt_a = _compute_acceleration(gt, fps=fps)
+    pred_a = _compute_acceleration(pred, fps=fps)
+    if gt_a["X"].shape[0] == 0 or pred_a["X"].shape[0] == 0:
+        empty = np.full((len(gt["labels"]),), np.nan, dtype=np.float64)
+        return {"full": np.nan, "per_joint": empty}
+
+    dx = pred_a["X"] - gt_a["X"]
+    dy = pred_a["Y"] - gt_a["Y"]
+    dz = pred_a["Z"] - gt_a["Z"]
+    dist = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2)
+
+    return {
+        "full": float(np.nanmean(dist)),
+        "per_joint": np.nanmean(dist, axis=0),
+    }
+
+
 def infer_model_config_from_checkpoint(checkpoint, fallback_num_joints):
     model_config = dict(checkpoint.get("model_config", {}))
     state_dict = checkpoint["model_state_dict"]
@@ -410,7 +448,8 @@ def start(args):
     insole_dir = os.path.join(config["location"]["data_path"], "Insole")
 
     skeleton_insole_datapath_pairs = get_datapath_pairs(skeleton_dir, insole_dir)
-    skeleton_df, insole_df, segment_ids = load_and_combine_data(skeleton_insole_datapath_pairs)
+    combined_data = cast(tuple[Any, Any, Any], load_and_combine_data(skeleton_insole_datapath_pairs))
+    skeleton_df, insole_df, segment_ids = combined_data
     pressure_lr_df, imu_lr_df, time_feature_df = restructure_insole_data(insole_df)
 
     sigma = float(config["predict"].get("smoothing_sigma", 0.0))
@@ -626,6 +665,7 @@ def start(args):
     model.eval()
     all_predictions = []
     output_frame_indices = []
+    inference_start = time.perf_counter()
 
     with torch.no_grad():
         for start_idx in valid_starts:
@@ -637,6 +677,10 @@ def start(args):
                 prediction = prediction_raw
             all_predictions.append(prediction.detach().cpu().clone())
             output_frame_indices.append(start_idx + parameters["sequence_len"] - 1)
+
+    inference_elapsed_s = max(time.perf_counter() - inference_start, 1e-12)
+    predicted_frames = int(len(valid_starts))
+    inference_fps = float(predicted_frames / inference_elapsed_s)
 
     final_predictions = torch.cat(all_predictions, dim=0).numpy()
 
@@ -672,15 +716,32 @@ def start(args):
         f"Prediction cycle {cycle_tag}: saving {len(split_outputs)} prediction file(s), "
         f"one per test tag."
     )
+    saved_outputs = []
     for row in split_outputs:
         stem = join_nonempty(cycle_tag, abl_tag, row["tag"], model_mode)
-        save_predictions(
+        output_file = save_predictions(
             row["predictions"],
             args.model,
             frame_indices=row["frame_indices"],
             output_stem=stem,
             column_names=target_column_names,
         )
+        saved_outputs.append(
+            {
+                "tag": row["tag"],
+                "frame_indices": np.asarray(row["frame_indices"], dtype=np.int64),
+                "output_file": output_file,
+            }
+        )
+
+    return {
+        "cycle_tag": cycle_tag,
+        "model_mode": model_mode,
+        "predicted_frames": predicted_frames,
+        "inference_seconds": float(inference_elapsed_s),
+        "inference_fps": inference_fps,
+        "outputs": saved_outputs,
+    }
 
 
 def get_parser(add_help=False):

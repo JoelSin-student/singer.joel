@@ -100,9 +100,20 @@ def initialize_notebook_runtime(start: Path | None = None):
     return root, python_cmd
 
 
-def run_cmd_streaming(cmd, cwd, env_overrides=None):
+def _in_notebook_runtime():
+    try:
+        from IPython.core.getipython import get_ipython
+
+        shell = get_ipython()
+        if shell is None:
+            return False
+        return shell.__class__.__name__ == "ZMQInteractiveShell"
+    except Exception:
+        return False
+
+
+def run_cmd_streaming(cmd, cwd, env_overrides=None, stream_mode="auto"):
     import codecs
-    from IPython.display import display
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
@@ -123,20 +134,45 @@ def run_cmd_streaming(cmd, cwd, env_overrides=None):
     assert process.stdout is not None
 
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    buffer = ""
-    progress_handle = None
-    pending_cr = False
 
-    def _update_progress(line_text):
-        nonlocal progress_handle
-        if not line_text:
+    mode = str(stream_mode or "auto").strip().lower()
+    if mode not in {"auto", "raw", "notebook"}:
+        raise ValueError("stream_mode must be one of: auto, raw, notebook")
+    if mode == "auto":
+        mode = "notebook" if _in_notebook_runtime() else "raw"
+
+    progress_handle = None
+    line_buffer = ""
+
+    def _write_raw(text):
+        if text:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+    def _write_notebook(text):
+        nonlocal progress_handle, line_buffer
+
+        if not text:
             return
-        if progress_handle is None:
-            handle = display("", display_id=True)
-            if handle is None:
-                return
-            progress_handle = handle
-        progress_handle.update(line_text)
+
+        for ch in text:
+            if ch == "\r":
+                if line_buffer.strip():
+                    try:
+                        from IPython.display import display
+
+                        if progress_handle is None:
+                            progress_handle = display("", display_id=True)
+                        if progress_handle is not None:
+                            progress_handle.update(line_buffer.strip())
+                    except Exception:
+                        print(line_buffer.strip(), end="\r", flush=True)
+                line_buffer = ""
+            elif ch == "\n":
+                print(line_buffer, flush=True)
+                line_buffer = ""
+            else:
+                line_buffer += ch
 
     try:
         while True:
@@ -145,53 +181,18 @@ def run_cmd_streaming(cmd, cwd, env_overrides=None):
                 break
 
             text = decoder.decode(chunk)
-            for ch in text:
-                if pending_cr:
-                    if ch == "\n":
-                        print(buffer, flush=True)
-                        buffer = ""
-                        pending_cr = False
-                        continue
-                    _update_progress(buffer.strip())
-                    buffer = ""
-                    pending_cr = False
-
-                if ch == "\r":
-                    pending_cr = True
-                elif ch == "\n":
-                    print(buffer, flush=True)
-                    buffer = ""
-                else:
-                    buffer += ch
+            if mode == "raw":
+                _write_raw(text)
+            else:
+                _write_notebook(text)
 
         trailing = decoder.decode(b"", final=True)
-        if trailing:
-            for ch in trailing:
-                if pending_cr:
-                    if ch == "\n":
-                        print(buffer, flush=True)
-                        buffer = ""
-                        pending_cr = False
-                        continue
-                    _update_progress(buffer.strip())
-                    buffer = ""
-                    pending_cr = False
-
-                if ch == "\r":
-                    pending_cr = True
-                elif ch == "\n":
-                    print(buffer, flush=True)
-                    buffer = ""
-                else:
-                    buffer += ch
-
-        if pending_cr:
-            _update_progress(buffer.strip())
-            buffer = ""
-            pending_cr = False
-
-        if buffer:
-            print(buffer, flush=True)
+        if mode == "raw":
+            _write_raw(trailing)
+        else:
+            _write_notebook(trailing)
+            if line_buffer:
+                print(line_buffer, flush=True)
     finally:
         process.stdout.close()
 

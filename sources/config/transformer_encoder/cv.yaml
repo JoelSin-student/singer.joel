@@ -1,0 +1,33 @@
+mode: cv
+
+location:
+  clean_data_dir: "data/clean_data"
+
+cv:
+  output_dir: "results/final_eval/cv"
+  run_label: "default"
+  train_config: "sources/config/transformer_encoder/train.yaml"
+  predict_config: "sources/config/transformer_encoder/predict.yaml"
+  fps: 60.0
+
+  # Supported aliases: p2p_insole, p2p, original, soleformer
+  algorithms:
+    - original
+    - soleformer
+
+  # Available CV summaries:
+  # - LOSO
+  # - LOSitO
+  # - PS-LOSitO
+  # - PSit-LOSO
+  run_types:
+    - LOSO
+    - LOSitO
+    - PS-LOSitO
+    - PSit-LOSO
+
+  # Optional filters for independent runs:
+  # - When run_types includes PS-LOSitO, restrict to these subjects if list is non-empty.
+  # - When run_types includes PSit-LOSO, restrict to these situations if list is non-empty.
+  ps_losito_subjects: []
+  psit_loso_situations: []

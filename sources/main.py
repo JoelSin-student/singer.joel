@@ -19,7 +19,8 @@ def main():
     processors = {
         'train': iml.import_module('sources.train'),
         'predict': iml.import_module('sources.predict'),
-        'visual': iml.import_module('sources.visualization')
+        'visual': iml.import_module('sources.visualization'),
+        'cv': iml.import_module('sources.cv'),
     }
 
     # read main-parser
