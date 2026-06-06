@@ -157,6 +157,15 @@ def _resolve_position_column_indices(target_column_names, target_position_column
     return [idx for idx, name in enumerate(columns) if coord_pattern.match(str(name))]
 
 
+def _coords_look_height_normalized(values, max_abs_threshold=0.02):
+    arr = np.asarray(values, dtype=np.float64)
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return False
+    max_abs = float(np.nanmax(np.abs(arr[finite])))
+    return max_abs <= float(max_abs_threshold)
+
+
 def _apply_subject_height_denorm(
     predictions,
     frame_indices,
@@ -191,7 +200,10 @@ def _apply_subject_height_denorm(
     height_map = _load_subject_height_map()
 
     denorm = predictions.copy()
+    coord_idx = np.asarray(coord_indices, dtype=np.int64)
     missing_subjects = []
+    applied_segments = 0
+    skipped_segments = 0
     for seg_id in np.unique(output_segment_ids):
         tag_index = int(seg_id) - 1
         if tag_index < 0 or tag_index >= len(sorted_tags):
@@ -206,8 +218,13 @@ def _apply_subject_height_denorm(
         subject_height = float(height_map[subject_key])
         row_mask = output_segment_ids == seg_id
         row_idx = np.where(row_mask)[0]
-        coord_idx = np.asarray(coord_indices, dtype=np.int64)
-        denorm[np.ix_(row_idx, coord_idx)] *= subject_height
+        segment_coords = denorm[np.ix_(row_idx, coord_idx)]
+        if not _coords_look_height_normalized(segment_coords):
+            skipped_segments += 1
+            continue
+
+        denorm[np.ix_(row_idx, coord_idx)] = segment_coords * subject_height
+        applied_segments += 1
 
     if missing_subjects:
         missing_subjects = sorted(set([m for m in missing_subjects if m]))
@@ -216,7 +233,9 @@ def _apply_subject_height_denorm(
         )
 
     print(
-        f"Applied subject-specific height denormalization on {len(coord_indices)} coordinate column(s)."
+        "Subject-specific height denormalization summary: "
+        f"coord_cols={len(coord_indices)}, applied_segments={applied_segments}, "
+        f"skipped_segments={skipped_segments}."
     )
     return denorm
 

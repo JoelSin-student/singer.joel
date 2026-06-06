@@ -72,6 +72,66 @@ def _parse_sample_key(key):
     )
 
 
+def _extract_subject_key_from_tag(tag):
+    parts = str(tag).strip().split("_")
+    return parts[0] if parts else ""
+
+
+def _load_subject_height_map(root):
+    subject_info_path = Path(root) / "data" / "subject_info.txt"
+    if not subject_info_path.is_file():
+        raise FileNotFoundError(f"subject_info.txt not found: {subject_info_path}")
+
+    rows = np.genfromtxt(
+        subject_info_path,
+        delimiter=None,
+        names=True,
+        dtype=None,
+        encoding="utf-8",
+    )
+    dtype_names = list(rows.dtype.names or [])
+    if "subject_key" not in dtype_names or "height" not in dtype_names:
+        raise ValueError(
+            "subject_info.txt must include 'subject_key' and 'height' columns for denormalization."
+        )
+
+    if rows.ndim == 0:
+        rows = np.asarray([rows])
+
+    height_map = {}
+    for row in rows:
+        key = str(row["subject_key"]).strip()
+        if not key:
+            continue
+        height_map[key] = float(row["height"])
+    return height_map
+
+
+def _looks_height_normalized(pos, max_abs_threshold=0.02):
+    stacked = np.stack([pos["X"], pos["Y"], pos["Z"]], axis=0)
+    finite = np.isfinite(stacked)
+    if not np.any(finite):
+        return False
+    max_abs = float(np.nanmax(np.abs(stacked[finite])))
+    return max_abs <= float(max_abs_threshold)
+
+
+def _denormalize_by_subject_height_if_needed(pos, subject_height):
+    if not _looks_height_normalized(pos):
+        return pos, False
+
+    scale = float(subject_height)
+    return (
+        {
+            "X": pos["X"] * scale,
+            "Y": pos["Y"] * scale,
+            "Z": pos["Z"] * scale,
+            "labels": list(pos["labels"]),
+        },
+        True,
+    )
+
+
 def _sorted_ids(values):
     def _key(v):
         token = str(v)
@@ -458,6 +518,9 @@ def _evaluate_fold_predictions(root, prediction_rows, fps=60.0):
     all_pr_z = []
     labels = None
     pair_count = 0
+    height_map = _load_subject_height_map(root)
+    denorm_gt_count = 0
+    denorm_pred_count = 0
 
     for row in prediction_rows:
         tag = str(row["tag"]).strip()
@@ -476,6 +539,19 @@ def _evaluate_fold_predictions(root, prediction_rows, fps=60.0):
         gt_pos = _extract_xyz(gt_df)
         pred_pos = _extract_xyz(pred_df)
         gt_pos, pred_pos = _align_joint_sets(gt_pos, pred_pos)
+
+        subject_key = _extract_subject_key_from_tag(tag)
+        if subject_key not in height_map:
+            raise KeyError(
+                f"Missing subject height for '{subject_key}' in data/subject_info.txt"
+            )
+        subject_height = float(height_map[subject_key])
+
+        gt_pos, gt_denorm_applied = _denormalize_by_subject_height_if_needed(gt_pos, subject_height)
+        pred_pos, pred_denorm_applied = _denormalize_by_subject_height_if_needed(pred_pos, subject_height)
+        denorm_gt_count += int(gt_denorm_applied)
+        denorm_pred_count += int(pred_denorm_applied)
+
         gt_pos = _exclude_joint_index_zero(gt_pos)
         pred_pos = _exclude_joint_index_zero(pred_pos)
 
@@ -492,6 +568,12 @@ def _evaluate_fold_predictions(root, prediction_rows, fps=60.0):
 
     if not all_gt_x:
         raise ValueError("No prediction/GT pairs were found for evaluation.")
+
+    print(
+        "[CV] Height denormalization summary: "
+        f"gt_applied={denorm_gt_count}/{pair_count}, "
+        f"pred_applied={denorm_pred_count}/{pair_count}"
+    )
 
     gt = {
         "X": np.vstack(all_gt_x),
