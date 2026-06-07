@@ -82,28 +82,29 @@ def _load_subject_height_map(root):
     if not subject_info_path.is_file():
         raise FileNotFoundError(f"subject_info.txt not found: {subject_info_path}")
 
-    rows = np.genfromtxt(
-        subject_info_path,
-        delimiter=None,
-        names=True,
-        dtype=None,
-        encoding="utf-8",
-    )
-    dtype_names = list(rows.dtype.names or [])
-    if "subject_key" not in dtype_names or "height" not in dtype_names:
+    # Auto-detect separators (comma/tab/space) and normalize header names.
+    rows = pd.read_csv(subject_info_path, sep=None, engine="python")
+    rows.columns = [str(col).strip().lower().lstrip("\ufeff") for col in rows.columns]
+
+    if "subject_key" not in rows.columns or "height" not in rows.columns:
+        available = ", ".join(rows.columns.tolist()) if len(rows.columns) else "<none>"
         raise ValueError(
-            "subject_info.txt must include 'subject_key' and 'height' columns for denormalization."
+            "subject_info.txt must include 'subject_key' and 'height' columns for denormalization. "
+            f"Found columns: {available}"
         )
 
-    if rows.ndim == 0:
-        rows = np.asarray([rows])
-
     height_map = {}
-    for row in rows:
+    for _, row in rows.iterrows():
         key = str(row["subject_key"]).strip()
         if not key:
             continue
+        if pd.isna(row["height"]):
+            continue
         height_map[key] = float(row["height"])
+
+    if not height_map:
+        raise ValueError("subject_info.txt did not contain any usable subject heights.")
+
     return height_map
 
 
