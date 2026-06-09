@@ -1,5 +1,6 @@
 # Prediction processor
 import argparse
+import csv
 import os
 import re
 import time
@@ -20,6 +21,34 @@ from sources.loader import (
 )
 from sources.model import SoleFormer, Transformer_Encoder, Transformer_Encoder_Seq2Seq, save_predictions
 from sources.util import format_ablation_tag, join_nonempty, resolve_ablation_id
+
+
+def _save_prediction_metrics_summary(summary_row, cycle_tag, model_mode, abl_tag):
+    output_dir = Path(".") / "results" / "final_eval" / "predict"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = join_nonempty("PREDICT_summary", cycle_tag, abl_tag, model_mode)
+    output_path = output_dir / f"{stem}.csv"
+
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(summary_row.keys()))
+        writer.writeheader()
+        writer.writerow(summary_row)
+
+    return output_path
+
+
+def _print_prediction_metrics(eval_result, inference_fps):
+    print("Prediction metrics (full-body, root joint excluded):")
+    print(f"- Inference speed (FPS): {float(inference_fps):.4f}")
+    print(f"- MPJPE: {float(eval_result['mpjpe_full']):.6f}")
+    print(f"- PA-MPJPE: {float(eval_result['pa_mpjpe_full']):.6f}")
+    print(f"- Inconsistency: {float(eval_result['inconsistency_full']):.6f}")
+    print(f"- MPJVE: {float(eval_result['mpjve_full']):.6f}")
+    print(f"- MPJAccE: {float(eval_result['mpjace_full']):.6f}")
+    print(f"- MER: {float(eval_result['mer_full']):.6f}")
+
+    print("Per-joint metrics are emitted as JSON vectors in summary CSV fields.")
 
 
 def _to_bool(value, default=False):
@@ -753,12 +782,61 @@ def start(args):
             }
         )
 
+    metrics_result = None
+    metrics_summary_file = None
+    eval_fps = float(args.fps if args.fps is not None else config["predict"].get("fps", 60.0))
+    try:
+        # Reuse CV evaluator to keep metric formulas identical between predict and CV paths.
+        from sources import cv as cv_module
+
+        metrics_result = cv_module._evaluate_fold_predictions(
+            root=Path(__file__).resolve().parents[1],
+            prediction_rows=saved_outputs,
+            fps=eval_fps,
+        )
+        _print_prediction_metrics(metrics_result, inference_fps=inference_fps)
+
+        summary_row = {
+            "summary_kind": "predict",
+            "cv_type": "predict",
+            "fold_id": "predict",
+            "held_out_subject": "",
+            "held_out_situation": "",
+            "num_train_keys": "",
+            "num_test_keys": int(len(saved_outputs)),
+            "algorithm": str(args.model),
+            "model_mode": model_mode,
+            "run_tag": str(abl_tag),
+            "checkpoint_file": str(checkpoint_path),
+            "prediction_cycle_tag": str(cycle_tag),
+            "inference_fps": float(inference_fps),
+            "inference_seconds": float(inference_elapsed_s),
+            "predicted_frames": int(predicted_frames),
+            **metrics_result,
+        }
+        metrics_summary_file = _save_prediction_metrics_summary(
+            summary_row=summary_row,
+            cycle_tag=cycle_tag,
+            model_mode=model_mode,
+            abl_tag=abl_tag,
+        )
+        print(f"Saved prediction metrics summary: {metrics_summary_file}")
+    except Exception as exc:
+        print(
+            "Prediction metrics were not computed. "
+            "This can happen when ground-truth test skeleton files are unavailable or mismatched. "
+            f"Reason: {exc}"
+        )
+
     return {
         "cycle_tag": cycle_tag,
         "model_mode": model_mode,
         "predicted_frames": predicted_frames,
         "inference_seconds": float(inference_elapsed_s),
         "inference_fps": inference_fps,
+        "metrics_fps": eval_fps,
+        "metrics": metrics_result,
+        "metrics_summary_file": str(metrics_summary_file) if metrics_summary_file is not None else None,
         "outputs": saved_outputs,
     }
 
@@ -781,6 +859,7 @@ def get_parser(add_help=False):
 
     parser.add_argument("--smoothing_sigma", type=float, default=None)
     parser.add_argument("--max_windows", type=int, default=None)
+    parser.add_argument("--fps", type=float, default=None)
     parser.add_argument("--model_mode", type=str, default=None, choices=["original", "simple_seq2seq", "soleformer"])
     parser.add_argument("--use_time_feature", type=str, default=None)
     parser.add_argument("--use_gradient_data", type=str, default=None)
